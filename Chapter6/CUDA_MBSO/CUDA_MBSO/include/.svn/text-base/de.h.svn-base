@@ -1,0 +1,75 @@
+#ifndef __DE_HH__
+#define __DE_HH__
+
+#include <config.h>
+#include <error.h>
+
+
+/*
+ * Configuration parameters
+ * 
+ * WARNING: Changing this struct will unleash a hell in your code.
+ * Just change macros to
+ */ 
+typedef struct de_config_t {
+	int		i_dim;
+	int		i_popsize;
+	int		i_stid;
+	int		i_run;
+	long	l_maxnfeval;
+	real	f_cross;
+	real	f_weight;
+    int		i_seed;
+    int		padding; //Oh YEAH
+    real 	f_minbound;
+    //~ real 	*f_minbound;
+    real 	f_maxbound;
+    //~ real 	*f_maxbound;
+    real 	f_optimal;
+	real 	f_bias;
+	char 	* output;
+	char 	* input;
+	/* Configuration parameters should also be on device */
+    de_config_t * d_config;
+} de_config;
+
+/*
+ * Macros for de_config
+ */ 
+#define MINBOUND_OFFSET 	6*sizeof(int)+1*sizeof(long)+2*sizeof(real)
+#define MAXBOUND_OFFSET 	MINBOUND_OFFSET+sizeof(real*)
+#define OUTPUT_OFFSET 		MAXBOUND_OFFSET+sizeof(real*)+2*sizeof(real)
+
+
+typedef struct population_t {
+	real * 			d_pop;
+	real * 			h_pop;
+	real *			d_fval;
+	real *			h_fval;
+	size_t			d_pitch;
+	unsigned int	size;
+	unsigned int	dim;
+	unsigned int	best;
+#if STRATEGY == 3
+	real *			d_best;
+#endif
+} population;
+
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+error solve(de_config *config);
+error createpop(population **pop, unsigned int size, unsigned int dim);
+void freepop(population *pop);
+void loadtodev(population *pop);
+void loadfromdev(population *pop);
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

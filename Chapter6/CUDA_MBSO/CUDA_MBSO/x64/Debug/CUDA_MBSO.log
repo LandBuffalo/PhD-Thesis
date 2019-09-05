@@ -1,0 +1,6 @@
+﻿  CUDA_MBSO.vcxproj -> C:\Users\Chen JIN\Google Drive\1_Lab_Work\1_Code\CUDA_MBSO\x64\Debug\CUDA_MBSO.exe
+  CUDA_MBSO.vcxproj -> C:\Users\Chen JIN\Google Drive\1_Lab_Work\1_Code\CUDA_MBSO\x64\Debug\CUDA_MBSO.pdb (Full PDB)
+  copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\bin\cudart*.dll" "C:\Users\Chen JIN\Google Drive\1_Lab_Work\1_Code\CUDA_MBSO\x64\Debug\"
+  C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\bin\cudart32_80.dll
+  C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\bin\cudart64_80.dll
+  已复制         2 个文件。

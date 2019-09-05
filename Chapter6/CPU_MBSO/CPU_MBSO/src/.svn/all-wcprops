@@ -1,0 +1,53 @@
+K 25
+svn:wc:ra_dav:version-url
+V 33
+/svn/colo/!svn/ver/75/de/cuda/src
+END
+error.cu
+K 25
+svn:wc:ra_dav:version-url
+V 42
+/svn/colo/!svn/ver/10/de/cuda/src/error.cu
+END
+de_run.cu
+K 25
+svn:wc:ra_dav:version-url
+V 43
+/svn/colo/!svn/ver/19/de/cuda/src/de_run.cu
+END
+params.c
+K 25
+svn:wc:ra_dav:version-url
+V 42
+/svn/colo/!svn/ver/11/de/cuda/src/params.c
+END
+device.cu
+K 25
+svn:wc:ra_dav:version-url
+V 43
+/svn/colo/!svn/ver/14/de/cuda/src/device.cu
+END
+random.cu
+K 25
+svn:wc:ra_dav:version-url
+V 43
+/svn/colo/!svn/ver/16/de/cuda/src/random.cu
+END
+debug.cu
+K 25
+svn:wc:ra_dav:version-url
+V 42
+/svn/colo/!svn/ver/14/de/cuda/src/debug.cu
+END
+eval.cu
+K 25
+svn:wc:ra_dav:version-url
+V 41
+/svn/colo/!svn/ver/11/de/cuda/src/eval.cu
+END
+de.cu
+K 25
+svn:wc:ra_dav:version-url
+V 39
+/svn/colo/!svn/ver/75/de/cuda/src/de.cu
+END

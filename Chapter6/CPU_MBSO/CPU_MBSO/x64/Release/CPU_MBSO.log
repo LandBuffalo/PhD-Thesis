@@ -1,0 +1,9 @@
+﻿  Generating code
+  All 120 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Finished generating code
+  CPU_MBSO.vcxproj -> C:\Users\Chen JIN\Desktop\code review\Thesis code\Chapter6\CPU_MBSO\x64\Release\CPU_MBSO.exe
+  CPU_MBSO.vcxproj -> C:\Users\Chen JIN\Desktop\code review\Thesis code\Chapter6\CPU_MBSO\x64\Release\CPU_MBSO.pdb (Full PDB)
+  copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\bin\cudart*.dll" "C:\Users\Chen JIN\Desktop\code review\Thesis code\Chapter6\CPU_MBSO\x64\Release\"
+  C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\bin\cudart32_80.dll
+  C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v8.0\bin\cudart64_80.dll
+  已复制         2 个文件。

@@ -1,0 +1,91 @@
+#include <debug.h>
+#include <stdio.h>
+
+
+void printpop(population *pop){
+	real * buffer = (real*) malloc(pop->dim * pop->size * sizeof(real));
+	HANDLE_CUDA_ERROR(cudaThreadSynchronize());
+	HANDLE_CUDA_ERROR(cudaMemcpy2D(buffer, pop->size * sizeof(real), pop->d_pop, pop->d_pitch, pop->size*sizeof(real), pop->dim, cudaMemcpyDeviceToHost));
+	HANDLE_CUDA_ERROR(cudaThreadSynchronize());
+	DPRINTF(1, "population at %p (%d x %d) [\n", pop->d_pop, pop->dim, pop->size);
+	for (int i = 0; i < pop->size; i++) {
+		printf("[");
+		for (int j = 0; j < pop->dim; j++) {
+			printf("%f ", buffer[j*pop->size+i]);
+		}
+		printf("];\n");
+	}
+	printf("];\n");
+	printf("best individual %d [ ", pop->best);
+	for (int i = 0; i < pop->dim; i++) {
+		printf("%f ", buffer[i*pop->size + pop->best]);
+	}
+	printf("];\n");
+	free(buffer);
+}
+
+
+void printind(population *pop, unsigned int ind){
+	real * buffer = (real*) malloc(pop->dim * sizeof(real));
+	HANDLE_CUDA_ERROR(cudaMemcpy2D(buffer, sizeof(real), pop->d_pop + ind, pop->d_pitch, sizeof(real), pop->dim, cudaMemcpyDeviceToHost));
+	DPRINTF(1, "population at %p (individual %d) [ ", pop->d_pop, ind);
+	for (int i = 0; i < pop->dim; i++) {
+		printf("%f ", buffer[i]);
+	}
+	printf("]\n");
+	free(buffer);
+}
+
+
+void printinddim(population *pop, unsigned int ind, unsigned int dimmax){
+	real * buffer = (real*) malloc(dimmax * sizeof(real));
+	HANDLE_CUDA_ERROR(cudaMemcpy2D(buffer, sizeof(real), pop->d_pop + ind, pop->d_pitch, sizeof(real), dimmax, cudaMemcpyDeviceToHost));
+	DPRINTF(1, "population at %p (individual %d) [ ", pop->d_pop, ind);
+	for (int i = 0; i < dimmax; i++) {
+		printf("%f ", buffer[i]);
+	}
+	printf("]\n");
+	free(buffer);
+}
+
+void printfval(population* pop) {
+	real * buffer = (real*) malloc(pop->size * sizeof(real));
+	HANDLE_CUDA_ERROR(cudaMemcpy(buffer, pop->d_fval, pop->size*sizeof(real), cudaMemcpyDeviceToHost));
+	DPRINTF(1, "function evaluations at [ ", pop->d_fval);
+	for (int i = 0; i < pop->size; i++) {
+		printf("%f ", buffer[i]);
+	}
+	printf("]\n");
+	free(buffer);
+}
+
+
+
+void printuintmat(unsigned int * mat, size_t pitch, unsigned int cols, unsigned int rows) {
+	unsigned int  * buffer = (unsigned int *) malloc(rows * cols * sizeof(unsigned int ));
+	HANDLE_CUDA_ERROR(cudaMemcpy2D(buffer, cols * sizeof(unsigned int), mat, pitch, cols * sizeof(unsigned int), rows, cudaMemcpyDeviceToHost));
+	DPRINTF(1, "Matrix at %p [\n", mat);
+	for (int r = 0; r < rows; r++) {
+		printf("[");
+		for (int c = 0; c < cols; c++) {
+			printf("%02u ", buffer[c + r * cols]);
+		}
+		printf("];\n");
+	}
+	printf("];\n");
+	free(buffer);
+}
+
+
+void printrealmat(real * mat, size_t pitch, unsigned int cols, unsigned int rows) {
+	real * buffer = (real*) malloc(rows * cols * sizeof(real));
+	HANDLE_CUDA_ERROR(cudaMemcpy2D(buffer, cols * sizeof(real), mat, pitch, cols * sizeof(real), rows, cudaMemcpyDeviceToHost));
+	DPRINTF(1, "Matrix at %p [ ", mat);
+	for (int r = 0; r < rows; r++) {
+		for (int i = 0; i < cols; i++) {
+			printf("%f ", buffer[i + r * cols]);
+		}
+		printf("\n");
+	}
+	free(buffer);
+}

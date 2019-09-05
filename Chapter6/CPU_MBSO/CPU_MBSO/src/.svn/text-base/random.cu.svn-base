@@ -1,0 +1,37 @@
+#include <random.h>
+#include <stdio.h>
+#include <device.h>
+
+
+__global__ void setup(curandState * states, size_t curandrsize, unsigned int seed) {
+	int id = (blockIdx.x + gridDim.x * blockIdx.y) * curandrsize + threadIdx.x + blockDim.x * threadIdx.y;
+	curand_init(seed, id, 0, &states[id]);
+	//~ printf("B %d T %d S %p I %d C %lu\n", blockIdx.x, threadIdx.x, &states[id], id, curandrsize);
+}
+
+error initRandom(dim3 blocks, dim3 threads, randomgen **random, cudaStream_t stream, unsigned int seed) {
+	DPRINTF(2, "Initalizing random number generator.\n");
+	*random = (randomgen*) malloc(sizeof(randomgen));
+	if (*random == NULL) return ERRORNOMEM;
+	(*random)->threads = threads;
+	(*random)->blocks = blocks;
+	(*random)->d_states = NULL;
+	(*random)->d_pitch = NULL;
+	HANDLE_CUDA_ERROR(cudaMallocPitch(&(*random)->d_states, &(*random)->d_pitch, threads.x * threads.y * sizeof(curandState), blocks.x  * blocks.y));
+
+	
+	DPRINTF(2, "Launching setup<<<(%d, %d), (%d, %d), %d, %p>>>(%p, %lu, %d).\n", blocks.x, blocks.y, threads.x, threads.y, 0, stream, (*random)->d_states, (*random)->d_pitch/sizeof(curandState), seed);
+	setup<<<blocks, threads, 0, stream>>>((*random)->d_states, (*random)->d_pitch/sizeof(curandState), seed);
+	CHECK_CUDA_ERROR();
+	
+	return SUCCESS;
+}
+
+void freeRandom(randomgen *random) {
+	DPRINTF(2, "Freeing random number generator.\n");
+	if (random == NULL) return;
+	if (random->d_states != NULL) {
+		HANDLE_CUDA_ERROR(cudaFree(random->d_states));
+	}
+	free(random);
+}

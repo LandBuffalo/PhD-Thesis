@@ -1,0 +1,17 @@
+#include <config.h>
+#include <eval.h>
+
+
+#ifdef SHIFTEDSPHERE
+//~ static __device__ __forceinline__ real evaluate(int dim, real *pop, size_t poprsize, de_config *config) {
+	//~ real sum = config->f_bias;
+	//~ real var = 0.0;
+	//~ int i;
+	//~ for (i = 0; i < dim ; i++) {
+		//~ var = pop[threadIdx.x + i * poprsize];
+		//~ sum += var*var;
+	//~ }
+	//~ return sum;
+	//~ 
+//~ }
+#endif

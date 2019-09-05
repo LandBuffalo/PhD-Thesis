@@ -1,0 +1,207 @@
+#ifndef __CONFIG_H__
+#define __CONFIG_H__
+
+//~ #define USESINGLE
+
+/*
+ * Prints debugging messages
+ * Levels 0 - N
+ */
+//~ #define DEBUGLEVEL 1
+
+#if DEBUGLEVEL > 0
+	#define DEBUG(N, X) if (N <= DEBUGLEVEL) {X;}
+	#define PREFIX "DEBUG::%s:%d "
+	#define DPRINTF(N, ...) if (N <= DEBUGLEVEL) { fprintf(stdout, PREFIX ,__FILE__, __LINE__); fprintf(stdout, __VA_ARGS__); }
+
+	#if DEBUGLEVEL >= 3
+		#define printcol 31
+		#define printrow 8955
+	#endif
+#else /* Not DEBUG */
+	#define DPRINTF(N, ...)
+	#define DEBUG(N, X)
+#endif
+
+//~ #define NORAND
+
+//~ #define ALT_RAND
+/*
+ * Functions 
+ */
+//~ #define SPHERE
+#define SHIFTEDSPHERE
+//~ #define SHIFTEDROSENBROCK
+//~ #define SHIFTEDGRIEWANK
+//~ #define SHIFTEDACKLEY
+//~ #define SHIFTEDRASTRIGIN
+//~ #define SHIFTEDWEIERSTRASS
+//~ #define SHIFTEDHYBRID
+
+
+/*
+ * Blackbox behaviour: functions will not be evaluated using dim threads.
+ * In fact, only threadIdx.y == 0 computes the result.
+ * 
+ */ 
+
+//~ #define BLACKBOX
+
+/*
+ * Record out all results for plotting
+ */ 
+#define RECORD_OUT
+
+/*
+ * Testing strategies:
+ * 
+ * 1= Rand/2/bin
+ * 2= Rand/1/bin
+ * 3= Local/2/best NOT WORKING GOOD YET
+ */ 
+#define STRATEGY 2
+#if STRATEGY == 2
+	#define PM_DEPTH	4
+#else
+	#define PM_DEPTH	6
+#endif
+
+#if STRATEGY == 3
+	#define SHAREDDIMS 1
+#else
+	#define SHAREDDIMS 0
+#endif
+
+//~ #define COPYTOSHARED 1
+
+
+/*
+ * Maximum number of registers needed by one thread
+ * in itialization operations
+ * 
+ * Currently: random.cu::setup needs 34
+ * 
+ */ 
+#define MAX_REGISTERS 32
+#define RAND_REGISTERS 34
+#define MAX_DIMENSION 1000
+
+#define str(x) #x
+#define TOSTR(x) str(x)
+
+
+#ifdef SPHERE
+	#define SHIFTFILE 	TOSTR(shifts/sphere_func_data.dat)
+	#define F_BIAS		0
+	#define F_OPTIMAL	0
+	#define MINBOUND 	-100
+	#define MAXBOUND	100
+	#define VTR 1.0e-8
+#endif
+
+#ifdef SHIFTEDSPHERE
+	#define SHIFTFILE 	TOSTR(shifts/sphere_func_data.dat)
+	#define F_BIAS		-450
+	#define F_OPTIMAL	-450
+	#define MINBOUND 	-100
+	#define MAXBOUND	100
+	#define VTR 1.0e-8
+#endif
+
+#ifdef SHIFTEDROSENBROCK
+	#define SHIFTFILE 	TOSTR(shifts/rosenbrock_func_data.dat)
+	#define F_BIAS 		390
+	#define F_OPTIMAL	390
+	#define MINBOUND 	-100
+	#define MAXBOUND	100
+	#define VTR 1.0e-8
+#endif
+
+#ifdef SHIFTEDGRIEWANK
+	#define SHIFTFILE 	TOSTR(shifts/griewank_func_data.dat)
+	#define F_BIAS 		-180
+	#define F_OPTIMAL	-180
+	#define MINBOUND 	-600
+	#define MAXBOUND	600
+	#define VTR 1.0e-8
+#endif
+
+#ifdef SHIFTEDACKLEY
+	#define SHIFTFILE 	TOSTR(shifts/ackley_func_data.dat)
+	#define F_BIAS 		-140
+	#define F_OPTIMAL	-140
+	#define MINBOUND 	-32
+	#define MAXBOUND	32
+	#define VTR 1.0e-8
+#endif
+
+#ifdef SHIFTEDRASTRIGIN
+	#define SHIFTFILE 	TOSTR(shifts/rastrigin_func_data.dat)
+	#define F_BIAS 		-330
+	#define F_OPTIMAL	-330
+	#define MINBOUND 	-5
+	#define MAXBOUND	5
+	#define VTR 1.0e-8
+#endif
+
+#define W_A 0.5
+#define W_B 3.0
+#define W_K 20
+#define W_C -2
+
+#ifdef SHIFTEDWEIERSTRASS
+	#define SHIFTFILE 	TOSTR(shifts/weierstrass_func_data.dat)
+	#define F_BIAS 		90
+	#define F_OPTIMAL	90
+	#define MINBOUND 	-5
+	#define MAXBOUND	5
+	#define VTR 1.0e-8
+#endif
+
+#define HYBRID_FUNCS 10
+#ifdef SHIFTEDHYBRID
+
+	#define RASTRIGIN_BIAS1 0
+	#define RASTRIGIN_BIAS2 100
+	#define WEIERSTRASS_BIAS1 200
+	#define WEIERSTRASS_BIAS2 300
+	#define GRIEWANK_BIAS1 400
+	#define GRIEWANK_BIAS2 500
+	#define ACKLEY_BIAS1 600
+	#define ACKLEY_BIAS2 700
+	#define SPHERE_BIAS1 800
+	#define SPHERE_BIAS2 900
+	#define SHIFTFILE 	TOSTR(shifts/hybrid_func_data.dat)
+	#define SPHERE_LAMBDA	((real)5/(real)100)
+	#define RASTRIGIN_LAMBDA 1
+	#define WEIERSTRASS_LAMBDA 10
+	#define GRIEWANK_LAMBDA ((real)5/(real)60)
+	#define ACKLEY_LAMBDA ((real)5/(real)32)
+	#define F_BIAS		120
+	#define F_OPTIMAL	120
+	#define MINBOUND 	-5
+	#define MAXBOUND	5
+	#define VTR 1.0e-8
+#endif
+
+
+//~ #define RAND_SEED 12341
+
+#ifdef USESINGLE
+typedef unsigned int natural;
+typedef float real;
+
+#define CURAND_UNIFORM_REAL(x) curand_uniform(x)
+
+#else
+
+typedef unsigned int natural;
+typedef double real;
+
+#define CURAND_UNIFORM_REAL(x) curand_uniform_double(x)
+
+#endif
+
+
+#endif /* __CONFIG_H__ */
+

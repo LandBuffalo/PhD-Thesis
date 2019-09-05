@@ -1,0 +1,750 @@
+#ifndef __EVAL_HH__
+#define __EVAL_HH__
+
+#include <config.h>
+#include <de.h>
+#include <stdio.h>
+
+#define TOFUNCTION(X, DIMS, ...) \
+	extern __shared__ real shared[]; \
+	static __device__ __forceinline__ real evaluateglobal(int dim, real *pop, size_t poprsize, real * shifts, ##__VA_ARGS__)  { \
+		unsigned int ind = threadIdx.x + blockIdx.x * blockDim.x; \
+		real * result = shared; \
+		real * local = result + blockDim.x; \
+		X \
+	} \
+	static __device__ __forceinline__ real evaluateshared(int dim, real *pop, size_t poprsize, real* shifts, ##__VA_ARGS__)  { \
+		unsigned int ind = threadIdx.x; \
+		real * result = shared + DIMS * dim + blockDim.x * dim; \
+		real * local = result + blockDim.x; \
+		X \
+	}
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/*
+ * Function to be evaluated.
+ * Must be prepared to run as many threads.
+ * 
+ * Parameters:
+ * dim: dimension of the individual
+ * pop: entire population
+ * poprsize: size of the row of the population in bytes/sizeof(real)
+ * config: device available de_config struct
+ * 
+ * The nth variable of the indth individual is accesed as follows:
+ * pop[ind + n * poprsize]
+ * threadIdx.x = individual in block
+ * threadIdx.y = variables in the individual
+ * Result must be stored in result[threadIdx.x]
+ * 
+ * Shared mem reserved will be available in local[]
+ * 
+ */
+
+
+/*
+ * Sum all elements in a vector.
+ * 
+ * Works for any dimension.
+ * 
+ * It stops working in parallel when the number of remaining elements cannot be divided by 2.
+ */ 
+static __device__ __forceinline__  void parallelsum(real * vector, real* result) {
+	int olds = blockDim.y;
+	for(int s  = blockDim.y / 2; olds == s * 2; s >>=1) {
+		olds = s;
+		//~ if (blockIdx.x == 0 && threadIdx.x ==0 ) printf("T %d S %d OLDS %d\n", threadIdx.y, s, olds);
+		if (threadIdx.y < s) vector[threadIdx.x + blockDim.x * threadIdx.y] += vector[threadIdx.x + blockDim.x * (threadIdx.y+s)];
+		__syncthreads();
+		
+	}
+	
+	if (threadIdx.y == 0 ) {
+		real sum = vector[threadIdx.x];
+		for (int i = 1; i < olds; i++) {
+			//~ if (blockIdx.x == 0 && threadIdx.x ==0) printf("T %d I %d OLDS %d V %f\n", threadIdx.y, i, olds, vector[threadIdx.x + blockDim.x * i]);
+			sum += vector[threadIdx.x + blockDim.x * i];
+		}
+		*result = sum;
+	}
+
+	__syncthreads();
+	
+}
+
+
+/*
+ * Sum and mul elements in a vector.
+ * 
+ * Works for any dimension.
+ * 
+ * It stops working in parallel when the number of remaining elements cannot be divided by 2.
+ */ 
+static __device__ __forceinline__  void parallelsummul(real * sum, real * mul, real* rsum, real * rmul) {
+	int olds = blockDim.y;
+	for(int s  = blockDim.y / 2; olds == s * 2; s >>=1) {
+		olds = s;
+		//~ if (blockIdx.x == 0 && threadIdx.x ==0 ) printf("T %d S %d OLDS %d\n", threadIdx.y, s, olds);
+		if (threadIdx.y < s) {
+			sum[threadIdx.x + blockDim.x * threadIdx.y] += sum[threadIdx.x + blockDim.x * (threadIdx.y+s)];
+			mul[threadIdx.x + blockDim.x * threadIdx.y] *= mul[threadIdx.x + blockDim.x * (threadIdx.y+s)];
+		}
+		__syncthreads();
+		
+	}
+	
+	if (threadIdx.y == 0 ) {
+		real suma = sum[threadIdx.x];
+		real mula = mul[threadIdx.x];
+		for (int i = 1; i < olds; i++) {
+			//~ if (blockIdx.x == 0 && threadIdx.x ==0) printf("T %d I %d OLDS %d V %f\n", threadIdx.y, i, olds, vector[threadIdx.x + blockDim.x * i]);
+			suma += sum[threadIdx.x + blockDim.x * i];
+			mula *= mul[threadIdx.x + blockDim.x * i];
+		}
+		*rsum = suma;
+		*rmul = mula;
+	}
+
+	__syncthreads();
+	
+}
+
+
+/*
+ * Sum two differents vector.
+ * 
+ * Works for any dimension.
+ * 
+ * It stops working in parallel when the number of remaining elements cannot be divided by 2.
+ */ 
+static __device__ __forceinline__  void parallelsumsum(real * sum1, real * sum2, real* rsum1, real * rsum2) {
+	int olds = blockDim.y;
+	for(int s  = blockDim.y / 2; olds == s * 2; s >>=1) {
+		olds = s;
+		//~ if (blockIdx.x == 0 && threadIdx.x ==0 ) printf("T %d S %d OLDS %d\n", threadIdx.y, s, olds);
+		if (threadIdx.y < s) {
+			sum1[threadIdx.x + blockDim.x * threadIdx.y] += sum1[threadIdx.x + blockDim.x * (threadIdx.y+s)];
+			sum2[threadIdx.x + blockDim.x * threadIdx.y] += sum2[threadIdx.x + blockDim.x * (threadIdx.y+s)];
+		}
+		__syncthreads();
+		
+	}
+	
+	if (threadIdx.y == 0 ) {
+		real suma1 = sum1[threadIdx.x];
+		real suma2 = sum2[threadIdx.x];
+		for (int i = 1; i < olds; i++) {
+			//~ if (blockIdx.x == 0 && threadIdx.x ==0) printf("T %d I %d OLDS %d V %f\n", threadIdx.y, i, olds, vector[threadIdx.x + blockDim.x * i]);
+			suma1 += sum1[threadIdx.x + blockDim.x * i];
+			suma2 += sum2[threadIdx.x + blockDim.x * i];
+		}
+		*rsum1 = suma1;
+		*rsum2 = suma2;
+	}
+
+	__syncthreads();
+	
+}
+ 
+static __device__ __forceinline__  void shiftedsphere(int dim, real * pop, size_t poprsize, real* shifts, real* result, int ind, real* local) {
+#ifdef BLACKBOX
+	//~ if (threadIdx.x == 0) { printf("T %d S %f\n", threadIdx.y, shifts[threadIdx.y]); };
+	if (threadIdx.y == 0) {
+		real sum = 0.0;
+		real var = 0.0;
+		int i;
+		for (i = 0; i < dim ; i++) {
+#ifdef SHIFTEDHYBRID
+			var = (pop[ind + i * poprsize] - shifts[i])/SPHERE_LAMBDA;
+#else
+			var = pop[ind + i * poprsize] - shifts[i];
+#endif
+			sum += var*var;
+		}
+		result[threadIdx.x] = sum;
+	}
+#else
+#ifdef SHIFTEDHYBRID
+	real var = (pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y])/SPHERE_LAMBDA;
+#else
+	real var = pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y];
+#endif
+	local[threadIdx.x + blockDim.x * threadIdx.y] = var*var;
+	__syncthreads();
+	
+	parallelsum(local, &result[threadIdx.x]);
+#endif
+}
+
+#ifdef SHIFTEDSPHERE
+TOFUNCTION(
+	shiftedsphere(dim, pop, poprsize, shifts, result, ind, local);
+	__syncthreads();
+	return result[threadIdx.x] + F_BIAS;
+, SHAREDDIMS)
+
+natural __inline__ neededSharedMemPerInd(natural blocks, dim3 threads) {
+#ifdef BLACKBOX
+	return 0;
+#else
+	return threads.y * sizeof(real);
+#endif
+}
+#endif
+
+
+#ifdef SPHERE
+TOFUNCTION(
+	if (threadIdx.y == 0) {
+		real sum = 0.0;
+		real var = 0.0;
+		int i;
+		for (i = 0; i < dim ; i++) {
+			var = pop[ind + i * poprsize];
+			sum += var*var;
+		}
+		result[threadIdx.x] = sum;
+	}
+	__syncthreads();
+	return result[threadIdx.x];
+, SHAREDDIMS)
+
+natural __inline__ neededSharedMemPerInd(natural blocks, dim3 threads) {
+	return 0;
+}
+
+#endif
+
+#ifdef SHIFTEDROSENBROCK
+
+TOFUNCTION(
+	/* if (threadIdx.x == 0 && threadIdx.y == 0) printf("Shared %p Result %p Local %p Pop %p\n", shared, result, local, pop); */
+	local[threadIdx.x + blockDim.x * threadIdx.y] = pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y] + 1;
+	__syncthreads();
+#ifdef BLACKBOX
+	if (threadIdx.y == 0) {
+		real sum = F_BIAS;
+		real var = 0.0;
+		real var2 = 0.0;
+		int i;
+		for (i = 0; i < dim-1 ; i++) {
+			var = local[threadIdx.x + blockDim.x * i];
+			var2 = var -1;
+			var = var*var - local[threadIdx.x + blockDim.x * (i + 1)];
+			var2 = var2*var2;
+			var = var*var;
+			__threadfence_block();
+			sum += 100 * var + var2;
+			sum += local[threadIdx.x + blockDim.x * i];
+		}
+		result[threadIdx.x] = sum;
+	}
+	__syncthreads();
+	return result[threadIdx.x];
+#else
+	real var = 0.0;
+	real var2 = 0.0;
+	if (threadIdx.y != (dim -1)) {
+		var = local[threadIdx.x + blockDim.x * threadIdx.y];
+		var2 = var -1;
+		var = var*var - local[threadIdx.x + blockDim.x * (threadIdx.y +1)];
+		var2 = var2*var2;
+		var = var*var;
+		__threadfence_block();
+		local[threadIdx.x + blockDim.x * threadIdx.y] = 100 * var + var2;
+	/*	printf("Partial T %d R %f V as=[%f %f];\n", threadIdx.x, local[threadIdx.x + blockDim.x * threadIdx.y], pop[ind], pop[ind + poprsize]);*/
+	}
+	__syncthreads();
+	if (threadIdx.y == dim-1) {
+		local[threadIdx.x + blockDim.x * threadIdx.y] = 0;
+	}
+	
+	__syncthreads();
+	parallelsum(local, &result[threadIdx.x]);
+	return result[threadIdx.x] + F_BIAS;
+#endif
+	
+, SHAREDDIMS)
+
+natural __inline__ neededSharedMemPerInd(natural blocks, dim3 threads) {
+	return threads.y * sizeof(real);
+}
+
+#endif
+
+static __device__ __forceinline__  void shiftedgriewank(int dim, real * pop, size_t poprsize, real* shifts, real* result, int ind, real* local) {
+	/*if (threadIdx.x == 0 && threadIdx.y == 0) printf("Shared %p Result %p Local %p Pop %p\n", shared, result, local, pop); */
+#ifdef SHIFTEDHYBRID
+	real zi = (pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y]) / GRIEWANK_LAMBDA;
+#else
+	real zi = pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y];
+#endif
+	
+#ifdef BLACKBOX
+	local[threadIdx.x + blockDim.x * threadIdx.y] = zi;
+#else
+	local[threadIdx.x + blockDim.x * threadIdx.y] = (zi * zi)/4000;
+	local[threadIdx.x + blockDim.x * (dim + threadIdx.y)] = cos(zi/sqrt((double)threadIdx.y +1));
+#endif
+	/*printf("Values T %d %d Zi %f S %f P %f Sh %f as=[%f %f];\n", threadIdx.x, threadIdx.y, zi, local[threadIdx.x + blockDim.x * threadIdx.y], local[threadIdx.x + blockDim.x * (dim + threadIdx.y)], shifts[threadIdx.y], pop[ind], pop[ind + poprsize]);*/
+#ifdef SHIFTEDHYBRID
+}
+static __device__ __forceinline__  void shiftedgriewank2(int dim, real * pop, size_t poprsize, real* shifts, real* result, int ind, real* local) {
+#else
+	__syncthreads();
+#endif
+#ifdef BLACKBOX
+	if (threadIdx.y == 0) {
+		real sum = 0.0;
+		real prod = 1.0;
+
+		real zi = 0.0;
+		int i;
+		for (i = 0; i < dim ; i++) {
+			zi = local[threadIdx.x + blockDim.x * i];
+			sum += (zi * zi)/4000;
+			prod *= cos(zi/sqrt((double)i+1));
+		}
+		result[threadIdx.x] = sum - prod + 1;
+		//~ result[threadIdx.x] = sum + 1;
+		/*printf("Sum T %d S %f P %f R %f V as=[%f %f];\n", threadIdx.x, sum, prod, result[threadIdx.x], pop[ind], pop[ind + poprsize]);*/
+	}
+#else
+	real rsum;
+	real rmul;
+	parallelsummul(local, local + (blockDim.x * dim), &rsum, &rmul);
+	
+
+	if (threadIdx.y == 0) result[threadIdx.x] = rsum - rmul + 1;
+	__syncthreads();
+	//~ if (threadIdx.y == 0) printf("Sum T %d S %f P %f R %f V as=[%f %f];\n", threadIdx.x, rsum, rmul, result[threadIdx.x], pop[ind], pop[ind + poprsize]);
+#endif
+	
+}
+#ifdef SHIFTEDGRIEWANK
+TOFUNCTION(
+	shiftedgriewank(dim, pop, poprsize, shifts, result, ind, local);
+	__syncthreads();
+	/* printf("Result T %d %d R %f %p V as=[%f %f];\n", threadIdx.x, threadIdx.y, result[threadIdx.x], &result[threadIdx.x], pop[ind], pop[ind + poprsize]); */
+	return result[threadIdx.x] + F_BIAS;
+	
+, SHAREDDIMS)
+
+natural __inline__ neededSharedMemPerInd(natural blocks, dim3 threads) {
+#ifdef BLACKBOX
+	return threads.y * sizeof(real);
+#else
+	return 2 * threads.y * sizeof(real);
+#endif
+}
+
+#endif
+
+static __device__ __forceinline__  void shiftedackley(int dim, real * pop, size_t poprsize, real* shifts, real* result, int ind, real* local) {
+/*if (threadIdx.x == 0 && threadIdx.y == 0) printf("Shared %p Result %p Local %p Pop %p\n", shared, result, local, pop); */
+#ifdef SHIFTEDHYBRID
+	real zi = (pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y]) / ACKLEY_LAMBDA;
+#else
+	real zi = pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y];
+#endif
+	
+#ifdef BLACKBOX
+	local[threadIdx.x + blockDim.x * threadIdx.y] = zi;
+#else
+	local[threadIdx.x + blockDim.x * threadIdx.y] = (zi * zi);
+	local[threadIdx.x + blockDim.x * (dim + threadIdx.y)] = cos(2*M_PI*zi);
+#endif
+	
+	
+	/*printf("Values T %d %d Zi %f S %f P %f Sh %f as=[%f %f];\n", threadIdx.x, threadIdx.y, zi, local[threadIdx.x + blockDim.x * threadIdx.y], local[threadIdx.x + blockDim.x * (dim + threadIdx.y)], shifts[threadIdx.y], pop[ind], pop[ind + poprsize]);*/
+#ifdef SHIFTEDHYBRID
+}
+static __device__ __forceinline__  void shiftedackley2(int dim, real * pop, size_t poprsize, real* shifts, real* result, int ind, real* local) {
+#else
+	__syncthreads();
+#endif
+	
+#ifdef BLACKBOX
+	if (threadIdx.y == 0) {
+		real sum1 = 0.0;
+		real sum2 = 0.0;
+
+		real zi = 0.0;
+		int i;
+		for (i = 0; i < dim ; i++) {
+			zi = local[threadIdx.x + blockDim.x * i];
+			sum1 += (zi * zi);
+			sum2 += cos(2*M_PI*zi);
+		}
+		result[threadIdx.x] = 20-20 * exp(-0.2*sqrt(sum1/dim)) - exp(sum2/dim) + exp(1.0);
+		/*printf("Sum T %d S1 %f S2 %f R %f V as=[%f %f];\n", threadIdx.x, sum1, sum2, 20 -20 * exp(-0.2*sqrt(sum1/dim)) - exp(sum2/dim) + exp(1.0) + F_BIAS, pop[ind], pop[ind + poprsize]);*/
+	}
+#else
+	real sum1 = 0.0;
+	real sum2 = 0.0;
+	parallelsumsum(local, local + (dim*blockDim.x), &sum1, &sum2);
+	if (threadIdx.y == 0) result[threadIdx.x] = result[threadIdx.x] = 20-20 * exp(-0.2*sqrt(sum1/dim)) - exp(sum2/dim) + exp(1.0);
+	__syncthreads();
+
+#endif
+}
+
+#ifdef SHIFTEDACKLEY
+TOFUNCTION(
+	shiftedackley(dim, pop, poprsize, shifts, result, ind, local);
+	__syncthreads();
+	/* printf("Result T %d %d R %f %p V as=[%f %f];\n", threadIdx.x, threadIdx.y, result[threadIdx.x], &result[threadIdx.x], pop[ind], pop[ind + poprsize]); */
+	return result[threadIdx.x] + F_BIAS;
+	
+, SHAREDDIMS)
+
+natural __inline__ neededSharedMemPerInd(natural blocks, dim3 threads) {
+#ifdef BLACKBOX
+	return threads.y * sizeof(real);
+#else
+	return 2 * threads.y * sizeof(real);
+#endif
+}
+
+#endif
+
+
+static __device__ __forceinline__  void shiftedrastrigin(int dim, real * pop, size_t poprsize, real* shifts, real* result, int ind, real* local) {
+	real var = 0.0;
+#ifdef SHIFTEDHYBRID
+	var = (pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y]) / RASTRIGIN_LAMBDA;
+#else
+	var = pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y];
+#endif
+#ifdef BLACKBOX
+	local[threadIdx.y * blockDim.x + threadIdx.x] = var;
+#else
+	real power = (var*var);
+	local[threadIdx.y * blockDim.x + threadIdx.x] = (power - (10 * cos(2*M_PI*var)) + 10);
+#endif
+#ifdef SHIFTEDHYBRID
+}
+static __device__ __forceinline__  void shiftedrastrigin2(int dim, real * pop, size_t poprsize, real* shifts, real* result, int ind, real* local) {
+
+#else
+	__syncthreads();
+#endif
+
+#ifdef BLACKBOX
+	int i;
+	if (threadIdx.y == 0) {
+		real sum = 0.0;
+		real zi = 0.0;
+		for (i = 0; i < dim ; i++) {
+			zi = local[i * blockDim.x + threadIdx.x];
+			sum += ((zi*zi) - (10 * cos(2*M_PI*zi)) + 10);
+			sum += local[i * blockDim.x + threadIdx.x];
+		}
+		result[threadIdx.x] = sum;
+		
+	}
+
+#else
+	parallelsum(local, &result[threadIdx.x]);
+#endif
+	
+}
+
+#ifdef SHIFTEDRASTRIGIN
+TOFUNCTION(
+	shiftedrastrigin(dim, pop, poprsize, shifts, result, ind, local);
+	__syncthreads();
+	return result[threadIdx.x] + F_BIAS;
+	
+, SHAREDDIMS)
+
+natural __inline__ neededSharedMemPerInd(natural blocks, dim3 threads) {
+	return threads.y * sizeof(real);
+}
+
+
+#endif
+
+
+static __device__ __forceinline__  void shiftedweierstrass(int dim, real * pop, size_t poprsize, real* shifts, real* result, int ind, real* local) {
+	real var = 0.0;
+	
+#ifdef SHIFTEDHYBRID
+	var = (pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y]) / WEIERSTRASS_LAMBDA;
+#else
+	var = pop[ind + threadIdx.y * poprsize] - shifts[threadIdx.y];
+#endif
+
+#ifdef BLACKBOX
+	local[threadIdx.y * blockDim.x + threadIdx.x] = var;
+#else
+	int i;
+	real sum = 0.0;
+	for (i = 0; i <= W_K; i++) {
+		sum += pow(W_A, i) * cos(2 * M_PI * pow(W_B, i) * (var + 0.5));
+	}
+	local[threadIdx.y * blockDim.x + threadIdx.x] = sum;
+
+#endif
+	
+#ifdef SHIFTEDHYBRID
+}
+static __device__ __forceinline__  void shiftedweierstrass2(int dim, real * pop, size_t poprsize, real* shifts, real* result, int ind, real* local) {
+
+#else
+	__syncthreads();
+#endif
+#ifdef BLACKBOX
+	int i;
+	if (threadIdx.y == 0) {
+		real sum = 0.0;
+		real zi;
+		int j;
+		for (i = 0; i < dim ; i++) {
+			zi = local[i * blockDim.x + threadIdx.x];
+			for (j = 0; j <= W_K; j++) {
+				sum += pow(W_A, j) * cos(2 * M_PI * pow(W_B, j) * (zi + 0.5));
+			}
+		}
+		result[threadIdx.x] = sum - W_C * dim;
+	}
+#else
+	__syncthreads();
+	parallelsum(local, &result[threadIdx.x]);
+	if (threadIdx.y == 0) result[threadIdx.x] = result[threadIdx.x] - W_C * dim;
+	__syncthreads();
+	
+#endif
+	
+}
+
+#ifdef SHIFTEDWEIERSTRASS
+TOFUNCTION(
+	shiftedweierstrass(dim, pop, poprsize, shifts, result, ind, local);
+	__syncthreads();
+	return result[threadIdx.x] + F_BIAS;
+	
+, SHAREDDIMS)
+
+natural __inline__ neededSharedMemPerInd(natural blocks, dim3 threads) {
+	return threads.y * sizeof(real);
+}
+
+
+#endif
+
+static __device__ __forceinline__ void getweights(int dim, real * pop, size_t poprsize, real* shifts, size_t shiftrsize, int ind, real* result, real* local) {
+	local[threadIdx.y * blockDim.x + threadIdx.x] = pop[ind + poprsize * threadIdx.y];
+	__syncthreads();
+	int i = 0;
+	real var = 0.0;
+	real maxw = 0.0;
+	
+	int maxi = 0;
+	for (i = 0; i < HYBRID_FUNCS; i++) {
+		var = local[threadIdx.y * blockDim.x + threadIdx.x] - shifts[ i * shiftrsize + threadIdx.y];
+		local[(threadIdx.y + dim) * blockDim.x + threadIdx.x] = var * var;
+		__syncthreads();
+		if (threadIdx.y == 0) {
+
+			var = 0.0;
+			for (int j = 0; j < dim; j++) {
+				var += local[(j + dim) * blockDim.x + threadIdx.x];
+			}
+			var = exp(0-var/(2*dim));
+			if (var > maxw) {
+				maxw = var;
+				maxi = i;
+			}
+			
+			result[threadIdx.x + blockDim.x * i] = var;
+			//~ printf("Weights T %d W (%i) %f Max %f\n", threadIdx.x, i, var, maxw);
+			
+		}
+		__syncthreads();
+	}
+	
+	if (threadIdx.y == 0) {
+		real sumw = 0.0;
+		for (i = 0; i < HYBRID_FUNCS; i++) {
+			var = result[threadIdx.x + blockDim.x * i];
+			if (i != maxi) {
+				var = var * (1 - pow(maxw, 10));
+				
+			}
+			sumw += var;
+			result[threadIdx.x + blockDim.x * i] = var;
+		}
+		for (i = 0; i < HYBRID_FUNCS; i++) {
+			var = result[threadIdx.x + blockDim.x * i];
+			var = var / sumw;
+			result[threadIdx.x + blockDim.x * i] = var;
+			//~ printf("Weights2 T %d W (%i) %f S %f Max %f\n", threadIdx.x, i, var, sumw, maxw);
+		}
+	}
+}
+
+
+#ifdef SHIFTEDHYBRID
+TOFUNCTION(
+	real * nullshifts = local + dim;
+	real * rmax = nullshifts + dim;
+	real * rf = rmax + 1;
+	real * weights = rf + dim;
+	real * loc = weights + HYBRID_FUNCS * blockDim.x;
+	
+	getweights(dim, pop, poprsize, shifts, shiftrsize, ind, weights, loc);
+	
+	result [threadIdx.x] = 0;
+	
+	
+	
+	if (threadIdx.x == 0) {
+		local[threadIdx.y] = MAXBOUND;
+		nullshifts[threadIdx.y] = 0;
+		__threadfence_block();
+		shiftedrastrigin(dim, local, 1, nullshifts, rmax, threadIdx.x, loc);
+	}
+	__syncthreads();
+	if (threadIdx.x == 0) {
+		shiftedrastrigin2(dim, local, 1, nullshifts, rmax, threadIdx.x, loc);
+	}
+	__syncthreads();
+	shiftedrastrigin(dim, pop, poprsize, shifts, rf, ind, loc); 
+	__syncthreads();
+	shiftedrastrigin2(dim, pop, poprsize, shifts, rf, ind, loc); 
+	__syncthreads();
+	DEBUG(3, if (threadIdx.y == 0) printf("Ras1 T %d RF %f RM %f R %f\n", threadIdx.x, rf[threadIdx.x], rmax[0], weights[threadIdx.x]*(2000 * rf[threadIdx.x] / (rmax[0]) + RASTRIGIN_BIAS1)));
+	if (threadIdx.y == 0) result[threadIdx.x] += weights[threadIdx.x]*(2000 * rf[threadIdx.x] / (rmax[0]) + RASTRIGIN_BIAS1);
+	__syncthreads();
+	shiftedrastrigin(dim, pop, poprsize, shifts + shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	shiftedrastrigin2(dim, pop, poprsize, shifts + shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	DEBUG(3, if (threadIdx.y == 0) printf("Ras2 T %d RF %f RM %f R %f\n", threadIdx.x, rf[threadIdx.x], rmax[0],  weights[threadIdx.x + blockDim.x]*(2000 * rf[threadIdx.x] / (rmax[0]) + RASTRIGIN_BIAS2)));
+	if (threadIdx.y == 0) result[threadIdx.x] += weights[threadIdx.x + blockDim.x]*(2000 * rf[threadIdx.x] / (rmax[0]) + RASTRIGIN_BIAS2);
+	
+	
+	if (threadIdx.x == 0) {
+		local[threadIdx.y] = MAXBOUND;
+		nullshifts[threadIdx.y] = 0;
+		__threadfence_block();
+		shiftedweierstrass(dim, local, 1, nullshifts, rmax, threadIdx.x, loc);
+	}
+	__syncthreads();
+	if (threadIdx.x == 0) {
+		shiftedweierstrass2(dim, local, 1, nullshifts, rmax, threadIdx.x, loc);
+	}
+	__syncthreads();
+	shiftedweierstrass(dim, pop, poprsize, shifts + 2 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	shiftedweierstrass2(dim, pop, poprsize, shifts + 2 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	DEBUG(3, if (threadIdx.y == 0) printf("Wei1 T %d RF %f RM %f R %f\n", threadIdx.x, rf[threadIdx.x], rmax[0], weights[threadIdx.x + blockDim.x * 2]*(2000 * rf[threadIdx.x] / (rmax[0]) + WEIERSTRASS_BIAS1)));
+	if (threadIdx.y == 0) result[threadIdx.x] += weights[threadIdx.x + blockDim.x * 2]*(2000 * rf[threadIdx.x] / (rmax[0]) + WEIERSTRASS_BIAS1);
+	__syncthreads();
+	shiftedweierstrass(dim, pop, poprsize, shifts + 3 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	shiftedweierstrass2(dim, pop, poprsize, shifts + 3 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	DEBUG(3, if (threadIdx.y == 0) printf("Wei2 T %d RF %f RM %f R %f\n", threadIdx.x, rf[threadIdx.x], rmax[0],  weights[threadIdx.x + blockDim.x * 3]*(2000 * rf[threadIdx.x] / (rmax[0]) + WEIERSTRASS_BIAS2)));
+	if (threadIdx.y == 0) result[threadIdx.x] += weights[threadIdx.x + blockDim.x * 3]*(2000 * rf[threadIdx.x] / (rmax[0]) + WEIERSTRASS_BIAS2);
+	
+	if (threadIdx.x == 0) {
+		local[threadIdx.y] = MAXBOUND;
+		nullshifts[threadIdx.y] = 0;
+		__threadfence_block();
+		shiftedgriewank(dim, local, 1, nullshifts, rmax, threadIdx.x, loc);
+	}
+	__syncthreads();
+	if (threadIdx.x == 0) {
+		shiftedgriewank2(dim, local, 1, nullshifts, rmax, threadIdx.x, loc);
+	}
+	__syncthreads();
+	shiftedgriewank(dim, pop, poprsize, shifts + 4 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	shiftedgriewank2(dim, pop, poprsize, shifts + 4 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	DEBUG(3, if (threadIdx.y == 0) printf("Gri1 T %d RF %f RM %f R %f\n", threadIdx.x, rf[threadIdx.x], rmax[0], weights[threadIdx.x + blockDim.x * 4]*(2000 * rf[threadIdx.x] / (rmax[0]) + GRIEWANK_BIAS1)));
+	if (threadIdx.y == 0) result[threadIdx.x] += weights[threadIdx.x + blockDim.x * 4]*(2000 * rf[threadIdx.x] / (rmax[0]) + GRIEWANK_BIAS1);
+	__syncthreads();
+	shiftedgriewank(dim, pop, poprsize, shifts + 5 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	shiftedgriewank2(dim, pop, poprsize, shifts + 5 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	DEBUG(3, if (threadIdx.y == 0) printf("Gri2 T %d RF %f RM %f R %f\n", threadIdx.x, rf[threadIdx.x], rmax[0], weights[threadIdx.x + blockDim.x * 5]*(2000 * rf[threadIdx.x] / (rmax[0]) + GRIEWANK_BIAS2)));
+	if (threadIdx.y == 0) result[threadIdx.x] += weights[threadIdx.x + blockDim.x * 5]*(2000 * rf[threadIdx.x] / (rmax[0]) + GRIEWANK_BIAS2);
+	
+	if (threadIdx.x == 0) {
+		local[threadIdx.y] = MAXBOUND;
+		nullshifts[threadIdx.y] = 0;
+		__threadfence_block();
+		shiftedackley(dim, local, 1, nullshifts, rmax, threadIdx.x, loc);
+	}
+	__syncthreads();
+	if (threadIdx.x == 0) {
+		shiftedackley2(dim, local, 1, nullshifts, rmax, threadIdx.x, loc);
+	}
+	__syncthreads();
+	shiftedackley(dim, pop, poprsize, shifts + 6 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	shiftedackley2(dim, pop, poprsize, shifts + 6 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	DEBUG(3, if (threadIdx.y == 0) printf("Ack1 T %d RF %f RM %f R %f\n", threadIdx.x, rf[threadIdx.x], rmax[0], weights[threadIdx.x + blockDim.x * 6]*(2000 * rf[threadIdx.x] / (rmax[0]) + ACKLEY_BIAS1)));
+	if (threadIdx.y == 0) result[threadIdx.x] += weights[threadIdx.x + blockDim.x * 6]*(2000 * rf[threadIdx.x] / (rmax[0]) + ACKLEY_BIAS1);
+	__syncthreads();
+	shiftedackley(dim, pop, poprsize, shifts + 7 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	shiftedackley2(dim, pop, poprsize, shifts + 7 * shiftrsize, rf, ind, loc); 
+	__syncthreads();
+	DEBUG(3, if (threadIdx.y == 0) printf("Ack2 T %d RF %f RM %f R %f\n", threadIdx.x, rf[threadIdx.x], rmax[0], weights[threadIdx.x + blockDim.x * 7]*(2000 * rf[threadIdx.x] / (rmax[0]) + ACKLEY_BIAS2)));
+	if (threadIdx.y == 0) result[threadIdx.x] += weights[threadIdx.x + blockDim.x * 7]*(2000 * rf[threadIdx.x] / (rmax[0]) + ACKLEY_BIAS2);
+	
+	
+	
+	if (threadIdx.x == 0) {
+		local[threadIdx.y] = MAXBOUND;
+		nullshifts[threadIdx.y] = 0;
+		__threadfence_block();
+		shiftedsphere(dim, local, 1, nullshifts, rmax, threadIdx.x);
+	}
+	__syncthreads();
+	shiftedsphere(dim, pop, poprsize, shifts + 8* shiftrsize, rf, ind); 
+	__syncthreads();
+	DEBUG(3, if (threadIdx.y == 0) printf("Sph1 T %d RF %f RM %f R %f\n", threadIdx.x, rf[threadIdx.x], rmax[0], weights[threadIdx.x + blockDim.x * 8]*(2000 * rf[threadIdx.x] / (rmax[0]) + SPHERE_BIAS1)));
+	if (threadIdx.y == 0) result[threadIdx.x] += weights[threadIdx.x + blockDim.x * 8]*(2000 * rf[threadIdx.x] / (rmax[0]) + SPHERE_BIAS1);
+	__syncthreads();
+	shiftedsphere(dim, pop, poprsize, shifts + 9* shiftrsize, rf, ind); 
+	__syncthreads();
+	DEBUG(3, if (threadIdx.y == 0) printf("Sph2 T %d RF %f RM %f R %f\n", threadIdx.x, rf[threadIdx.x], rmax[0], weights[threadIdx.x + blockDim.x * 9]*(2000 * rf[threadIdx.x] / (rmax[0]) + SPHERE_BIAS2)));
+	if (threadIdx.y == 0) result[threadIdx.x] += weights[threadIdx.x + blockDim.x * 9]*(2000 * rf[threadIdx.x] / (rmax[0]) + SPHERE_BIAS2);
+	__syncthreads();
+	
+	DEBUG(3, if (threadIdx.y == 0) printf("Total T %d R %f\n", threadIdx.x, result[threadIdx.x] + F_BIAS));
+	return result[threadIdx.x] + F_BIAS;
+	
+, SHAREDDIMS, size_t shiftrsize)
+
+
+/*
+ * 2 * threads.y / threads.x = Max vector + Null Shifts
+ * 1 / threads.x  = Result Max
+ * 1 = Function Result
+ * HYBRID_FUNCS = weights
+ * 2 * threads.y = Local for functions
+ */ 
+natural __inline__ neededSharedMemPerInd(natural blocks, dim3 threads) {
+	return ceil((2 * threads.y * sizeof(real) + (1 + HYBRID_FUNCS) * sizeof(real))/threads.x) + (1 + HYBRID_FUNCS)*sizeof(real) + 2* threads.y * sizeof(real);
+}
+#endif
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

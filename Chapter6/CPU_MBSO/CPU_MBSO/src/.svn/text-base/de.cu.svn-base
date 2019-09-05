@@ -1,0 +1,892 @@
+#include <de.h>
+#include <stdio.h>
+#include <curand_kernel.h>
+#include <random.h>
+
+#include <debug.h>
+#include <device.h>
+#include <eval.h>
+#include <sys/time.h>
+
+/*
+ * Initialices population using a random number generator.
+ * 
+ * Parameters:
+ * pop: Population to be initiliced (matrix)
+ * poprsize: Population row size in bytes/sizeof(real)
+ * d_config: Device memory resident config struct
+ * states: Matrix of random generator states.
+ * statesrsize: Random generator row size in bytes/sizeof(curandstate)
+ * dim: dimension of the population
+ * 
+ */ 
+extern __shared__ real bounds[];
+__global__ void initpop(real *pop, size_t poprsize, de_config* d_config, curandState *states, size_t statesrsize, natural dim) {
+	int var = blockDim.x * blockIdx.x + threadIdx.x;
+	curandState localState = states[blockIdx.x * statesrsize + threadIdx.x];
+	//~ real minbound = d_config->f_minbound;
+	//~ real maxbound = d_config->f_maxbound;
+	//~ for (int i = threadIdx.x; i < dim; i+=blockDim.x) {
+		//~ bounds[i] = minbound[i];
+		//~ bounds[i + dim] = maxbound[i];
+	//~ }
+	//~ __syncthreads();
+	for (int i = 0; i < dim; i++) {
+#ifdef NORAND
+		pop[var + i * poprsize] =  MINBOUND + (((real)i/(real)dim)+((real)var/((real)blockDim.x*gridDim.x))) * (MAXBOUND - MINBOUND);
+#else
+		pop[var + i * poprsize] =  MINBOUND + CURAND_UNIFORM_REAL(&localState) * (MAXBOUND - MINBOUND);
+#endif
+		//~ pop[var + i * poprsize] =  bounds[i] + (i/dim) * (bounds[i+dim] - bounds[i]);
+	}
+	states[blockIdx.x * statesrsize + threadIdx.x] = localState;
+}
+
+#ifdef SHIFTEDHYBRID
+__global__ void getfitness(real *pop, size_t poprsize, size_t dim, real* fval, real* shifts, size_t shiftrsize) {
+	fval[threadIdx.x + blockIdx.x * blockDim.x] = evaluateglobal(dim, pop, poprsize, shifts, shiftrsize);
+}
+#else
+__global__ void getfitness(real *pop, size_t poprsize, size_t dim, real* fval, real* shifts) {
+	fval[threadIdx.x + blockIdx.x * blockDim.x] = evaluateglobal(dim, pop, poprsize, shifts);
+}
+#endif
+
+__global__ void initperm(unsigned int* perm, size_t permrsize, natural size) {
+	int var = blockDim.x * blockIdx.x + threadIdx.x;
+	for (int i = 0; i < size; i++) {
+		perm[i * permrsize + var] = (var + i) % size;
+	}
+}
+
+__global__ void genperm(unsigned int * perm, size_t permrsize, unsigned int * globalperm, size_t globalpermrsize, curandState *states, size_t statesrsize) {
+	curandState localState = states[blockIdx.x * statesrsize + threadIdx.x];
+	int var = blockDim.x * blockIdx.x + threadIdx.x;
+	int size = blockDim.x * gridDim.x;
+#ifdef ALT_RAND
+	unsigned int r1, r2, r3;
+	do r1 = (int)(CURAND_UNIFORM_REAL(&localState)*(size-1)); while (var == r1);
+	do r2 = (int)(CURAND_UNIFORM_REAL(&localState)*(size-1)); while (var == r2 || r1 == r2);
+	do r3 = (int)(CURAND_UNIFORM_REAL(&localState)*(size-1)); while (var == r3 || r1 == r3 || r2 == r3);
+	perm[var] = var;
+	perm[permrsize + var] = r1;
+	perm[2 * permrsize + var] = r2;
+	perm[3 * permrsize + var] = r3;
+#else
+	unsigned int tmp1 = var;
+	unsigned int tmp2 = 1;
+	unsigned int swap;
+	int j = size;
+	while (j > size - PM_DEPTH +1) {
+		//random index > 0
+#ifdef NORAND
+		tmp1 = tmp2;
+#else
+		tmp1 = (int)(CURAND_UNIFORM_REAL(&localState)*(j-1))+1;
+#endif
+		swap = globalperm[tmp1 * globalpermrsize + var];
+		perm[tmp2 * permrsize + var] = swap;
+		//~ perm[tmp2 * permrsize + var] = j;
+#ifndef NORAND
+		globalperm[tmp1 * permrsize + var] = globalperm[(j-1) * permrsize + var];
+		globalperm[(j-1) * permrsize + var] = swap;
+#endif
+		j--;
+		tmp2++;
+	}
+	perm[var] = globalperm[var];
+#endif
+	states[blockIdx.x * statesrsize + threadIdx.x] = localState;
+	
+}
+
+
+extern __shared__ real sharedbounds[];
+__global__ void applystrategy(real *pop, size_t poprsize, unsigned int * perm, size_t permrsize, real fcross, real fweight, unsigned int dim, unsigned int size, curandState *states, size_t statesrsize, real * fval, real * newpop, size_t newpoprsize, real* newfval, real* shifts
+#ifdef SHIFTEDHYBRID
+	, size_t shiftsrsize
+#endif
+#if STRATEGY == 3
+	, real* best
+#endif
+
+) {
+#if STRATEGY == 3
+	real * crossing = sharedbounds + (1 * dim);
+	//~ real * crossing = sharedbounds + (3 * dim);
+	real * lbest = sharedbounds;
+	//~ real * lbest = sharedbounds + (2 * dim);
+#else
+	real * crossing = sharedbounds;
+#endif
+#ifdef COPYTOSHARED
+	#if STRATEGY == 1
+		int * js = (int*)(crossing + 6*dim*blockDim.x);
+	#elif STRATEGY == 2
+		int * js = (int*)(crossing + 6*dim*blockDim.x);
+	#elif STRATEGY == 3
+		int * js = (int*)(crossing + 7*dim*blockDim.x);
+	#else 
+		#error No valid strategy defined
+	#endif
+#else
+	int * js = (int*)(crossing + dim*blockDim.x);
+#endif
+	//~ if (threadIdx.x == 2) printf("B %d T %d S %p C %p\n", blockIdx.x, threadIdx.x, sharedbounds, crossing);
+	//~ if (threadIdx.x == 0) {
+		//~ real * minbound = d_config->f_minbound;
+		//~ real * maxbound = d_config->f_maxbound;
+		//~ sharedbounds[threadIdx.y] = minbound[threadIdx.y];
+		//~ sharedbounds[threadIdx.y + dim] = maxbound[threadIdx.y];
+#if STRATEGY == 3
+	if (threadIdx.x == 0) {
+		lbest[threadIdx.y] = best[threadIdx.y];
+		//~ printf("best[%d] = %f\n", threadIdx.y, best[threadIdx.y]);
+	}
+		
+#endif
+	//~ }
+	
+	
+	
+	unsigned int ind = threadIdx.x + blockIdx.x * blockDim.x;
+	curandState localState = states[blockIdx.x * statesrsize + threadIdx.x + blockDim.x * threadIdx.y];
+#ifdef COPYTOSHARED
+	unsigned int which = 0;
+	for (int i = 0; i < PM_DEPTH; i++) {
+		which = perm[i * permrsize + ind];
+		//~ for (int v = 0; v < dim; v++) {
+		crossing[(i * dim + threadIdx.y) * blockDim.x + threadIdx.x] = pop[poprsize * threadIdx.y + which];
+		//~ }
+	}
+	__syncthreads();
+#else
+	unsigned int which1 = perm[1 * permrsize + ind];
+	unsigned int which2 = perm[2 * permrsize + ind];
+	unsigned int which3 = perm[3 * permrsize + ind];
+#if STRATEGY == 1 || STRATEGY == 3
+	unsigned int which4 = perm[4 * permrsize + ind];
+	unsigned int which5 = perm[5 * permrsize + ind];
+#endif
+#endif
+	
+	real rand;
+	real value;
+	
+	if (threadIdx.y == 0) {
+		js[threadIdx.x] = (int)(CURAND_UNIFORM_REAL(&localState)*dim);
+	}
+	__syncthreads();
+	int j = js[threadIdx.x];
+	
+	//~ if (threadIdx.y == 0) {
+		//~ for (int var = 0; var < dim; var++) {
+	rand = CURAND_UNIFORM_REAL(&localState);
+	DEBUG(2, if (threadIdx.x == 2) printf("B %d T %d S %d %d %f\n", blockIdx.x, threadIdx.x, threadIdx.y, j, rand));
+
+	if ((threadIdx.y == j) || (rand < fcross)) {
+#ifdef COPYTOSHARED
+	#if STRATEGY == 1
+		value = crossing[(threadIdx.y + dim) * blockDim.x + threadIdx.x] + fweight * (crossing[(threadIdx.y + (2*dim)) * blockDim.x + threadIdx.x]-crossing[(threadIdx.y + (3*dim)) * blockDim.x + threadIdx.x]+crossing[(threadIdx.y + (4*dim)) * blockDim.x + threadIdx.x]-crossing[(threadIdx.y + (5*dim)) * blockDim.x + threadIdx.x]);
+	#elif STRATEGY == 2 
+		value = crossing[(threadIdx.y + dim) * blockDim.x + threadIdx.x] + fweight * (crossing[(threadIdx.y + (2*dim)) * blockDim.x + threadIdx.x]-crossing[(threadIdx.y + (3*dim)) * blockDim.x + threadIdx.x]);
+	#else
+		value = crossing[threadIdx.y * blockDim.x + threadIdx.x] + fweight * (lbest[threadIdx.y] - crossing[threadIdx.y * blockDim.x + threadIdx.x]) + fweight * (crossing[(threadIdx.y + (2*dim)) * blockDim.x + threadIdx.x]-crossing[(threadIdx.y + (3*dim)) * blockDim.x + threadIdx.x]+crossing[(threadIdx.y + (4*dim)) * blockDim.x + threadIdx.x]-crossing[(threadIdx.y + (5*dim)) * blockDim.x + threadIdx.x]);
+	#endif
+#else
+	#if STRATEGY == 1
+		value = pop[threadIdx.y * poprsize + which1] + fweight * (pop[threadIdx.y * poprsize + which2]-pop[threadIdx.y * poprsize + which3]+pop[threadIdx.y * poprsize + which4]-pop[threadIdx.y * poprsize + which5]);
+	#elif STRATEGY == 2
+		value = pop[threadIdx.y * poprsize + which3] + fweight * (pop[threadIdx.y * poprsize + which1]-pop[threadIdx.y * poprsize + which2]);
+	#else
+		value = pop[threadIdx.y * poprsize + threadIdx.x] + fweight * (lbest[threadIdx.y] - pop[threadIdx.y * poprsize + threadIdx.x])+ fweight * (pop[threadIdx.y * poprsize + which2]-pop[threadIdx.y * poprsize + which3]+pop[threadIdx.y * poprsize + which4]-pop[threadIdx.y * poprsize + which5]);
+		//~ printf("new[%d, %d] = %f = %f + %f * (%f - %f)\n", threadIdx.x, threadIdx.y, value, pop[threadIdx.y * poprsize + threadIdx.x], fweight, lbest[threadIdx.y], pop[threadIdx.y * poprsize + threadIdx.x]);
+	
+	#endif
+		//~ value = -1;
+#endif
+
+		while ((value < MINBOUND) || (value > MAXBOUND)) {
+			if (value < MINBOUND) {
+				//~ value = MINBOUND + CURAND_UNIFORM_REAL(&localState)*(MINBOUND - value);
+				value = MINBOUND + MINBOUND - value;
+			}
+			if (value > MAXBOUND) {
+				//~ value = MAXBOUND - CURAND_UNIFORM_REAL(&localState)*(value - MAXBOUND);
+				value = MAXBOUND - (value - MAXBOUND);
+			}
+		}
+
+	} else {
+		value = pop[threadIdx.y * poprsize + threadIdx.x];
+	}
+	crossing[threadIdx.y * blockDim.x + threadIdx.x] = value;
+	
+	
+	
+	states[blockIdx.x * statesrsize + threadIdx.x + blockDim.x * threadIdx.y] = localState;
+	
+	__syncthreads();
+	
+	//~ real newval = -2.3;
+#ifdef SHIFTEDHYBRID
+	real newval = evaluateshared(dim, crossing, blockDim.x, shifts, shiftsrsize);
+#else
+	real newval = evaluateshared(dim, crossing, blockDim.x, shifts);
+#endif
+	
+	//~ printf("B %d T %d V: %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f = %f\n", blockIdx.x, threadIdx.x, crossing[0 * blockDim.x + threadIdx.x], crossing[1 * blockDim.x + threadIdx.x], crossing[2 * blockDim.x + threadIdx.x], crossing[3 * blockDim.x + threadIdx.x], crossing[4 * blockDim.x + threadIdx.x], crossing[5 * blockDim.x + threadIdx.x], crossing[6 * blockDim.x + threadIdx.x], crossing[7 * blockDim.x + threadIdx.x], crossing[8 * blockDim.x + threadIdx.x], crossing[9 * blockDim.x + threadIdx.x], crossing[10 * blockDim.x + threadIdx.x], crossing[11 * blockDim.x + threadIdx.x], crossing[12 * blockDim.x + threadIdx.x], crossing[13 * blockDim.x + threadIdx.x], crossing[14 * blockDim.x + threadIdx.x], crossing[15 * blockDim.x + threadIdx.x], crossing[16 * blockDim.x + threadIdx.x], crossing[17 * blockDim.x + threadIdx.x], crossing[18 * blockDim.x + threadIdx.x], crossing[19 * blockDim.x + threadIdx.x], newval);
+	
+	
+	//~ __syncthreads();
+	
+	//~ printf("B %d T %d V: %f as= [ %f %f]\n", blockIdx.x, threadIdx.x, newval, crossing[threadIdx.x], crossing[blockDim.x + threadIdx.x]);
+	if (fval[ind] >= newval) {
+		if (threadIdx.y == 0) newfval[ind] = newval;
+		//~ for (int v = 0; v < dim; v++) {
+		newpop[newpoprsize * threadIdx.y + ind] = crossing[threadIdx.y * blockDim.x + threadIdx.x];
+		//~ }
+	}
+	
+}
+
+/*
+ * Creates an entire population using the specified size and dimension.
+ */ 
+error createpop(population **pop, unsigned int size, unsigned int dim) {
+	DPRINTF(2, "Creating new population.\n");
+	*pop = (population *)malloc(sizeof(population));
+	population *result = *pop;
+	if (result == NULL) return ERRORNOMEM;
+	(result)->h_pop = NULL;
+	(result)->d_pop = NULL;
+	(result)->h_fval = NULL;
+	(result)->d_fval = NULL;
+	(result)->size = size;
+	(result)->dim = dim;
+	(result)->best = 0;
+#if STRATEGY == 3
+	(result)->d_best = NULL;
+#endif
+	(result)->d_pitch = 0;
+	
+	(result)->h_pop = (real *) malloc(dim*size*sizeof(real));
+	if ((result)->h_pop == NULL) {
+		freepop(result);
+		return ERRORNOMEM;
+	}
+	(result)->h_fval = (real *) malloc(size*sizeof(real));
+	if ((result)->h_fval == NULL) {
+		freepop(result);
+		return ERRORNOMEM;
+	}
+	
+	
+	HANDLE_CUDA_ERROR(cudaMallocPitch(&result->d_pop, &result->d_pitch, size * sizeof(real), dim));
+	HANDLE_CUDA_ERROR(cudaMemset2D(result->d_pop, result->d_pitch,0, size*sizeof(real), dim));
+	HANDLE_CUDA_ERROR(cudaMalloc(&result->d_fval, size*sizeof(real)));
+	HANDLE_CUDA_ERROR(cudaMemset(result->d_fval, 0, size*sizeof(real)));
+
+#if STRATEGY == 3
+	HANDLE_CUDA_ERROR(cudaMalloc(&result->d_best, dim*sizeof(real)));
+	HANDLE_CUDA_ERROR(cudaMemset(result->d_best, 0, dim*sizeof(real)));
+#endif
+	DPRINTF(2,"=========================\n");
+	DPRINTF(2," Population created\n");
+	DPRINTF(2,"=========================\n");
+	DPRINTF(2,"Host %p\n", result->d_pop);
+	DPRINTF(2,"Device %p\n", result->h_pop);
+	DPRINTF(2,"Pitch %lu\n", result->d_pitch);
+	DPRINTF(2,"Host values %p\n", result->h_fval);
+	DPRINTF(2,"Device values %p\n", result->d_fval);
+	DPRINTF(2,"Size %d\n", result->size);
+	DPRINTF(2,"Dim %d\n", result->dim);
+	DPRINTF(2,"Best %d\n", result->best);
+#if STRATEGY == 3
+	DPRINTF(2,"Device best %p\n", result->d_best);
+#endif
+	DPRINTF(2,"=========================\n\n");
+#if STRATEGY == 3
+#endif
+	return SUCCESS;
+}
+
+
+/*
+ * Frees memory allocated by createpop
+ */ 
+void freepop(population *pop) {
+	DPRINTF(2, "Freeing population.\n");
+	if (pop == NULL) return;
+	if (pop->h_pop != NULL) free(pop->h_pop);
+	if (pop->h_fval != NULL) free(pop->h_fval);
+	if (pop->d_pop != NULL) HANDLE_CUDA_ERROR(cudaFree(pop->d_pop));
+	if (pop->d_fval!= NULL) HANDLE_CUDA_ERROR(cudaFree(pop->d_fval));
+	free(pop);
+}
+
+/*
+ * Replaces population on device with the host one
+ */ 
+void loadtodev(population *pop) {
+	HANDLE_CUDA_ERROR(cudaMemcpy2D(pop->d_pop, pop->d_pitch, pop->h_pop, pop->size * sizeof(real), pop->size * sizeof(real), pop->dim, cudaMemcpyHostToDevice));
+	HANDLE_CUDA_ERROR(cudaMemcpy(pop->d_fval, pop->h_fval, pop->size*sizeof(real), cudaMemcpyHostToDevice));
+}
+
+/*
+ * Replaces population on host with the device one
+ */ 
+void loadfromdev(population *pop) {
+	HANDLE_CUDA_ERROR(cudaThreadSynchronize());
+	HANDLE_CUDA_ERROR(cudaMemcpy2D(pop->h_pop, pop->size *sizeof(real), pop->d_pop, pop->d_pitch, pop->size * sizeof(real), pop->dim, cudaMemcpyDeviceToHost));
+	HANDLE_CUDA_ERROR(cudaMemcpy(pop->h_fval, pop->d_fval, pop->size*sizeof(real), cudaMemcpyDeviceToHost));
+}
+
+/*
+ * Replaces fval on host with the device one
+ */ 
+void loadfvalfromdev(population *pop) {
+	HANDLE_CUDA_ERROR(cudaMemcpy(pop->h_fval, pop->d_fval, pop->size*sizeof(real), cudaMemcpyDeviceToHost));
+}
+
+
+inline void getBest(population *pop) {
+	unsigned int best = 0;
+	real fbest = pop->h_fval[best];
+	for (int i = 1; i < pop->size; i++) {
+		if (fbest > pop->h_fval[i]) {
+			best = i;
+			fbest = pop->h_fval[i];
+		}
+	}
+	pop->best = best;
+#if STRATEGY == 3
+	HANDLE_CUDA_ERROR(cudaMemcpy2D(pop->d_best, sizeof(real), pop->d_pop + best, pop->d_pitch, sizeof(real), pop->dim, cudaMemcpyDeviceToDevice));
+#endif
+}
+
+
+
+typedef struct execconfig_t {
+	dim3 	randpermthreads;
+	dim3 	randpermblocks;
+	natural initthreads;
+	natural initblocks;
+	dim3 threads;
+	natural blocks;
+} execconfig;
+
+natural memPerInd(natural size, natural dim, execconfig * config) {
+#ifdef COPYTOSHARED
+	/* Depends on strategy */
+	natural memperind =  dim * 6 * sizeof(real) + sizeof(int);
+#else
+	/* Not copying permutation on shared memory */
+	natural memperind =  sizeof(real) + 1 * dim * sizeof(real) + sizeof(int); //Result + X + J
+#endif
+
+	memperind += neededSharedMemPerInd(config->blocks, config->threads); 
+	
+	return memperind;
+	
+}
+
+error calcconfig(natural size, natural dim, execconfig * config) {
+	/* Depends on function evaluation */
+	natural memperind = memPerInd(size, dim, config); 
+	
+	natural mem = getMaxSharedMem(); //Shared memory - bounds
+#if STRATEGY == 3
+	mem -= dim * sizeof(real);
+#endif
+	natural maxInds = mem/memperind;
+	DPRINTF(1,"Maximum individuals for pop size %d is %u (mem = %u, memxind = %u)\n", size, maxInds, mem, memperind);
+
+	if (maxInds > getWarpSize()) {
+		maxInds = getWarpSize();
+	}
+	natural maxthreadsbymem = getMaxThreadsPerBlock() / dim;
+	
+	natural maxthreadsbyregs =  getRegsPerBlock() / MAX_REGISTERS / dim;
+	
+	natural maxthreads = maxthreadsbyregs < maxthreadsbymem ? maxthreadsbyregs : maxthreadsbymem;
+
+	DPRINTF(1,"Maximum threads for initialization is %u (mem = %u, regs = %u)\n", maxthreads, maxthreadsbymem, maxthreadsbyregs);
+
+	natural threads = maxInds < maxthreads ? maxInds : maxthreads;
+	//~ if (threads == 0) threads = 1;
+	
+	while ( size % threads != 0) {
+		threads --;
+	}
+	
+	config->threads = dim3(threads, dim);
+	config->blocks = size/threads;
+	
+	DPRINTF(1, "Optimal for pop size %d is %u blocks (%u, %u) threads\n", size, config->blocks, config->threads.x, config->threads.y);
+	
+	
+	
+	
+	int x = threads;
+	int y = dim;
+	int bx = size/threads;
+	int by = 1;
+	while ((x * y) * RAND_REGISTERS > getRegsPerBlock()) {
+		//~ printf("x %d, y %d, bx %d, by %d\n", x, y, bx, by);
+		by++;
+		while (y % by != 0) by++;
+		y = y /by; 
+	}
+	
+	config->randpermblocks = dim3(bx, by);
+	config->randpermthreads = dim3(x, y);
+	
+	
+	DPRINTF(1,"Maximum threads for random initailization is (%u, %u) x (%u, %u)\n", config->randpermblocks.x, config->randpermblocks.y, config->randpermthreads.x, config->randpermthreads.y);
+	
+	
+	
+	threads = getWarpSize();
+	if (size < threads) threads = size;
+	
+	while (size % threads != 0) {
+		threads --;
+	}
+	
+	config->initthreads = threads;
+	config->initblocks = size/threads;
+	
+	DPRINTF(1, "Optimal for initialization (pop size %d) is %u blocks %u threads\n", size, config->initblocks, config->initthreads);
+	
+	return SUCCESS;
+}
+
+typedef struct shift_t {
+	real * shifts;
+	real * devshifts;
+#ifdef SHIFTEDHYBRID
+	size_t pitch;
+#endif
+} shift;
+
+void freeshifts(shift * shifts) {
+	if (shifts != NULL) {
+		if (shifts->devshifts != NULL) HANDLE_CUDA_ERROR(cudaFree(shifts->devshifts));
+		if (shifts->shifts != NULL) free(shifts->shifts);
+		free(shifts);
+	}
+}
+
+
+error loadshift(shift ** shifts, de_config * config) {
+	DPRINTF(1, "Using shift values from file %s\n", SHIFTFILE);
+	FILE *file = fopen(SHIFTFILE,"r");
+	if (file == NULL) {
+		fprintf(stderr, "ERROR: cannot open file (%s) while reading shifting values from %s\n", strerror(errno), SHIFTFILE);
+		return ERRORNOFILE;
+	}
+	
+	float *floatbuffer = (float*)malloc(config->i_dim*sizeof(float));
+	if (floatbuffer == NULL) return ERRORNOMEM;
+
+	shift * result = (shift *)malloc(sizeof(shift));
+	if (result == NULL) return ERRORNOMEM;
+
+#ifdef SHIFTEDHYBRID
+	result->shifts = (real *)malloc(sizeof(real) * config->i_dim * HYBRID_FUNCS);
+#else
+	result->shifts = (real *)malloc(sizeof(real) * config->i_dim);
+#endif
+	if (result->shifts == NULL) {
+		freeshifts(result);
+		return ERRORNOMEM;
+	}
+
+#ifdef SHIFTEDHYBRID
+	HANDLE_CUDA_ERROR(cudaMallocPitch(&result->devshifts, &result->pitch, config->i_dim*sizeof(real), HYBRID_FUNCS));
+#else
+	HANDLE_CUDA_ERROR(cudaMalloc(&result->devshifts, config->i_dim*sizeof(real)));
+#endif
+	if (result->devshifts == NULL) {
+		freeshifts(result);
+		return ERRORNODEVICEMEM;
+	}
+	
+
+
+	
+#ifdef SHIFTEDHYBRID
+	int j = 0;
+	for (j = 0; j < HYBRID_FUNCS; j++) {
+		int items = (int)fread(floatbuffer, sizeof(float), config->i_dim, file);
+		fseek(file, (MAX_DIMENSION - config->i_dim) * sizeof(float), SEEK_CUR);
+		if (items != config->i_dim) {
+			fprintf(stderr, "ERROR: invalid number of elements (%d) while reading shifting values from %s (%d)\n", items, SHIFTFILE, j);
+			return ERRORNOFILE;
+		}
+		for (int i = 0; i < items; i++){
+			result->shifts[i + j * config->i_dim] = (real) floatbuffer[i];
+		}	
+	}
+#else
+	int items = (int)fread(floatbuffer, sizeof(float), config->i_dim, file);
+	if (items != config->i_dim) {
+		fprintf(stderr, "ERROR: invalid number of elements (%d) while reading shifting values from %s\n", items, SHIFTFILE);
+		return ERRORNOFILE;
+	}
+	for (int i = 0; i < items; i++){
+		result->shifts[i] = (real) floatbuffer[i];
+	}	
+#endif
+
+#ifdef SHIFTEDHYBRID
+	HANDLE_CUDA_ERROR(cudaMemcpy2D(result->devshifts, result->pitch, result->shifts, config->i_dim*sizeof(real), config->i_dim*sizeof(real), HYBRID_FUNCS, cudaMemcpyHostToDevice));
+#else
+	HANDLE_CUDA_ERROR(cudaMemcpy(result->devshifts, result->shifts, config->i_dim*sizeof(real), cudaMemcpyHostToDevice));
+#endif
+	
+	free(floatbuffer);
+	
+	*shifts = result;
+	
+	return SUCCESS;
+}
+
+#define EXITSOLVE freeRandom(random); \
+					freepop(pop); \
+					freepop(newpop); \
+					freeshifts(shifts); \
+					if (perm != NULL) HANDLE_CUDA_ERROR(cudaFree(perm)); \
+					if (perm2 != NULL) HANDLE_CUDA_ERROR(cudaFree(perm2)); \
+					if (globalperm != NULL) HANDLE_CUDA_ERROR(cudaFree(globalperm));
+#define EXITSOLVEERROR if (err) { EXITSOLVE return err;}
+
+#define SAVERESULT 	loadfromdev(pop); \
+					gettimeofday(&tim, NULL); \
+					double t2=tim.tv_sec+(tim.tv_usec/1000000.0); \
+					fprintf(resultvec_out, "best%d = [", config->i_run);\
+					for (int i=0; i<pop->dim; i++) { \
+						fprintf(resultvec_out,"%12.30f ", pop->h_pop[i * pop->size + pop->best]);\
+					} \
+					fprintf(resultvec_out,"];\n"); \
+					fclose(resultvec_out); \
+					fprintf(result_out, "%d\t", config->i_run); \
+					fprintf(result_out, "%12.30f\t", pop->h_fval[pop->best]); \
+					fprintf(result_out, "%12.30f\t", config->f_optimal); \
+					fprintf(result_out, "%12.30f\t", VTR); \
+					fprintf(result_out, "%ld\t", nfevalatvtr); \
+					fprintf(result_out, "%lu\t", end-begin); \
+					fprintf(result_out, "%f\t", t2-t1); \
+					fprintf(result_out, "\n"); \
+					fclose(result_out);
+
+#ifdef RECORD_OUT
+#define EXIT_RECORD FErecord_val[FErecord_idx] = pop->h_fval[pop->best]; \
+					FErecord[FErecord_idx] = nfeval; \
+					for (int i=0; i < FErecord_num; i++) { \
+						fprintf(fp_feout, "%lu %12.30f\n", FErecord[i] * (i != FErecord_idx ? config->i_popsize : 1), FErecord_val[i] - config->f_optimal); \
+					} \
+					fclose(fp_feout); \
+					for (int i=0; i < FVrecord_num; i++) \
+						fprintf(fp_fvout, "%12.30f %lu\n", FVrecord[i], FVrecord_val[i]); \
+					fclose(fp_fvout); \
+					free(FErecord); \
+					free(FErecord_val); \
+					free(FVrecord); \
+					free(FVrecord_val);
+#else
+#define EXIT_RECORD 
+#endif
+
+error solve(de_config *config) {
+	DPRINTF(1, "Attempting to solve using DE\n");
+	error err;
+	population* pop = NULL;
+	population* newpop = NULL;
+	
+	randomgen * random = NULL;
+	unsigned int * globalperm = NULL;
+	unsigned int * perm  = NULL;
+	unsigned int * perm2  = NULL;
+	unsigned int whichperm = 0;
+	
+	size_t globalpermpitch = 0;
+	size_t permpitch = 0;
+	long nfeval = 0;
+	long nfevalatvtr = 0;
+
+
+	shift* shifts = NULL;
+
+	err = loadshift(&shifts, config);
+	if (err != SUCCESS) return err;
+	
+	execconfig kernelconfig;
+	calcconfig(config->i_popsize, config->i_dim, &kernelconfig);
+	
+	cudaStream_t stream[2];
+	/* Random Generation */
+	HANDLE_CUDA_ERROR(cudaStreamCreate(&stream[0]));
+	/* Random Generation 2 */
+	HANDLE_CUDA_ERROR(cudaStreamCreate(&stream[1]));
+
+	err = initRandom(kernelconfig.randpermblocks, kernelconfig.randpermthreads, &random, stream[0], config->i_seed);
+	EXITSOLVEERROR
+	
+	err = createpop(&pop, config->i_popsize, config->i_dim);
+	EXITSOLVEERROR
+	
+	err = createpop(&newpop, config->i_popsize, config->i_dim);
+	EXITSOLVEERROR
+	
+	char * fout = (char*) malloc(strlen(config->output) + 11);
+	FILE *result_out;
+	FILE *resultvec_out;
+	
+	sprintf(fout, "%s.out", config->output);
+	result_out = fopen(fout, "a");
+	
+	sprintf(fout, "%s_ve.out", config->output);
+	resultvec_out = fopen(fout, "a");
+	
+#ifdef RECORD_OUT
+	FILE *fp_feout;
+	
+	sprintf(fout, "%s_fe%03d.out", config->output, config->i_run);
+	fp_feout = fopen(fout, "w");
+	int FErecord_num = ((int) (log10(((double) (config->l_maxnfeval)/(double)(config->i_popsize))/((double) config->i_dim)))) + 3;
+	DPRINTF(1, "Number of function records %d log10(%ld/%d) , log %f\n", FErecord_num, config->l_maxnfeval, config->i_dim, log10(((double) (config->l_maxnfeval))/((double) config->i_dim)));
+	unsigned long *FErecord = (unsigned long*) malloc(FErecord_num*sizeof(unsigned long));
+	real *FErecord_val = (real*) malloc(FErecord_num*sizeof(real));
+	FErecord[0] = 1;
+	for (int i=1; i< FErecord_num; i++) {
+		FErecord[i] = (int)config->i_dim* pow(10.0, (i-1));
+	}
+	int FErecord_idx = 0;
+	
+	DEBUG(1, DPRINTF(1, "Storing values at #evaluations [");
+	for (int i=0; i< FErecord_num; i++) {
+		printf("%lu ", FErecord[i]);
+	}
+	printf("]\n");
+	)
+
+	FILE *fp_fvout;
+	sprintf(fout, "%s_fv%03d.out", config->output, config->i_run);
+	fp_fvout = fopen(fout, "w");
+	int FVrecord_num = ((int) (2 - log10((double) VTR))/0.1) + 2;
+	real *FVrecord = (real*) malloc(FVrecord_num*sizeof(real));
+	unsigned long *FVrecord_val = (unsigned long*) malloc(FVrecord_num*sizeof(unsigned long));
+	for (int i=0; i< FVrecord_num; i++) {
+		FVrecord[i] = pow(10.0, 2-0.1*i);
+	}
+    int FVrecord_idx = 0;
+    DEBUG(1, DPRINTF(1, "Storing values at precissions [");
+	for (int i=0; i< FVrecord_num; i++) {
+		printf("%f ", FVrecord[i]);
+	}
+	printf("]\n");
+	)
+
+#endif
+
+	free(fout);
+	
+	clock_t begin, end;
+	begin = clock();
+	struct timeval tim;
+	gettimeofday(&tim, NULL);
+	double t1=tim.tv_sec+(tim.tv_usec/1000000.0);
+	
+
+	HANDLE_CUDA_ERROR(cudaMallocPitch(&globalperm, &globalpermpitch, pop->size * sizeof(unsigned int), pop->size));
+	HANDLE_CUDA_ERROR(cudaMallocPitch(&perm, &permpitch, pop->size * sizeof(unsigned int), PM_DEPTH));
+	HANDLE_CUDA_ERROR(cudaMallocPitch(&perm2, &permpitch, pop->size * sizeof(unsigned int), PM_DEPTH));
+	HANDLE_CUDA_ERROR(cudaMemset2D(perm, permpitch, 0, pop->size * sizeof(unsigned int), PM_DEPTH));
+	HANDLE_CUDA_ERROR(cudaMemset2D(perm2, permpitch, 0, pop->size * sizeof(unsigned int), PM_DEPTH));
+	
+	//~ printuintmat(perm, permpitch, pop->size, PM_DEPTH);
+
+	initperm<<<kernelconfig.initblocks, kernelconfig.initthreads, 0, stream[0]>>>(globalperm, globalpermpitch/sizeof(unsigned int), pop->size);
+	CHECK_CUDA_ERROR();
+	//~ printpop(pop);
+	DEBUG(2, printuintmat(globalperm, globalpermpitch, pop->size, pop->size));
+	
+	initpop<<<kernelconfig.initblocks, kernelconfig.initthreads, pop->dim * sizeof(real)*2, stream[1]>>>(pop->d_pop, pop->d_pitch/sizeof(real), config->d_config, random->d_states, random->d_pitch/sizeof(curandState), pop->dim);
+	CHECK_CUDA_ERROR();
+	
+	//~ printind(pop, 9);
+	//~ printind(pop, 1);
+	//~ printind(pop, 2);
+	//~ printind(pop, 3);
+	//~ printpop(pop);
+	
+	unsigned int needed = neededSharedMemPerInd(kernelconfig.blocks, kernelconfig.threads);
+	
+	DPRINTF(1, "Launching getfitness<<<%u, (%u, %u), %lu, %p>>>(%p, %lu, %u, %p, %p)\n", kernelconfig.blocks, kernelconfig.threads.x, kernelconfig.threads.y, kernelconfig.threads.x * (needed + sizeof(real)) , stream[1], pop->d_pop, pop->d_pitch/sizeof(real), pop->dim, pop->d_fval, shifts->devshifts)
+#ifdef SHIFTEDHYBRID
+	getfitness<<<kernelconfig.blocks, kernelconfig.threads, kernelconfig.threads.x * (needed + sizeof(real)) , stream[1]>>>(pop->d_pop, pop->d_pitch/sizeof(real), pop->dim, pop->d_fval, shifts->devshifts, shifts->pitch/sizeof(real));
+#else
+	getfitness<<<kernelconfig.blocks, kernelconfig.threads, kernelconfig.threads.x * (needed + sizeof(real)) , stream[1]>>>(pop->d_pop, pop->d_pitch/sizeof(real), pop->dim, pop->d_fval, shifts->devshifts);
+#endif
+	CHECK_CUDA_ERROR();
+	nfeval += config->i_popsize;
+	
+	DPRINTF(1, "Launching genperm<<<%u, %u>>>(%p, %lu, %p, %lu, %p, %lu)\n", kernelconfig.initblocks, kernelconfig.initthreads, perm, permpitch/sizeof(unsigned int), globalperm, globalpermpitch/sizeof(unsigned int), random->d_states, random->d_pitch/sizeof(curandState));
+	genperm<<<kernelconfig.initblocks, kernelconfig.initthreads, 0, stream[0]>>>(perm, permpitch/sizeof(unsigned int), globalperm, globalpermpitch/sizeof(unsigned int), random->d_states, random->d_pitch/sizeof(curandState));
+	CHECK_CUDA_ERROR();
+
+	DEBUG(2, printuintmat(perm, permpitch, pop->size, PM_DEPTH));
+	
+	/* Wait for fitness evaluation to finish */
+	HANDLE_CUDA_ERROR(cudaStreamSynchronize(stream[1]));
+	loadfvalfromdev(pop);
+	getBest(pop);
+
+#ifdef RECORD_OUT
+		if (FErecord[FErecord_idx] * config->i_popsize == nfeval)
+			FErecord_val[FErecord_idx++] = pop->h_fval[pop->best];
+		while (pop->h_fval[pop->best]-config->f_optimal <= FVrecord[FVrecord_idx] && FVrecord_idx != FVrecord_num) {
+			FVrecord_val[FVrecord_idx++] = nfeval;
+		}
+#endif
+
+	DEBUG(2, printfval(pop));
+	DEBUG(2, printpop(pop));
+	//~ printfval(pop);
+	
+	DPRINTF(1, "Best value %12.30f at %d (%lu)\n", pop->h_fval[pop->best], pop->best, nfeval);
+	
+
+	if (fabs(pop->h_fval[pop->best] - config->f_optimal) <= VTR && nfevalatvtr == 0) {
+		end = clock();
+		DPRINTF(1, "VTR Reached! Optimal: %12.30f Best: %12.30f Difference: %12.30f Vector: [", config->f_optimal,  pop->h_fval[pop->best], fabs(pop->h_fval[pop->best] - config->f_optimal));
+		nfevalatvtr = nfeval;
+		//~ printpop(pop);
+		//~ printind(pop, 3);
+		DEBUG(1,
+		loadfromdev(pop);
+		for (int i=0; i<pop->dim; i++) {
+			printf("%12.30f ", pop->h_pop[i * pop->size + pop->best]);
+		}
+		printf("]\n");
+		);
+		
+		DPRINTF(1, "Function evaluations: %lu - Elapsed time: %lu\n", nfeval, end - begin);	
+	}
+	
+	
+	
+	
+	
+	HANDLE_CUDA_ERROR(cudaMemcpy2D(newpop->d_pop, newpop->d_pitch, pop->d_pop, pop->d_pitch, pop->size * sizeof(real), pop->dim, cudaMemcpyDeviceToDevice));
+	HANDLE_CUDA_ERROR(cudaMemcpy(newpop->d_fval, pop->d_fval, pop->size*sizeof(real), cudaMemcpyDeviceToDevice));
+
+	natural memperind = memPerInd(pop->size, pop->dim, &kernelconfig);
+#ifdef COPYTOSHARED
+	//~ natural sharedMem = kernelconfig.threads.x * pop->dim * 6 * sizeof(real) + 2 * pop->dim * sizeof(real) + kernelconfig.threads.x * sizeof(int) + kernelconfig.threads.x * needed;
+	natural sharedMem = kernelconfig.threads.x * memperind + 1 * pop->dim * sizeof(real);
+#else
+	//~ natural sharedMem = kernelconfig.threads.x * pop->dim * 2 * sizeof(real) + 2 * pop->dim * sizeof(real) + kernelconfig.threads.x * sizeof(int) + kernelconfig.threads.x * needed;
+	natural sharedMem = kernelconfig.threads.x * memperind;
+#endif
+
+#if STRATEGY == 3
+	sharedMem += pop->dim * sizeof(real); // best vector
+#endif
+
+	while (nfeval + config->i_popsize <= config->l_maxnfeval) {
+		/* Wait for permutation to finish */
+		//~ HANDLE_CUDA_ERROR(cudaStreamSynchronize(stream[whichperm]));
+		
+		DPRINTF(3, "Launching applystrategy<<<%u, %u, %u, %u>>>(%p, %lu, %p, %lu, %f, %f, %u, %u, %p, %lu, %p, %p, %lu, %p, %p)\n", kernelconfig.blocks, kernelconfig.threads.x, sharedMem, 0, pop->d_pop, pop->d_pitch/sizeof(real), (whichperm == 0 ? perm : perm2), permpitch/sizeof(unsigned int), config->f_cross, config->f_weight, pop->dim, pop->size, random->d_states, random->d_pitch/sizeof(curandState), pop->d_fval, newpop->d_pop, newpop->d_pitch/sizeof(real), newpop->d_fval, shifts->devshifts);
+		applystrategy<<<kernelconfig.blocks, kernelconfig.threads, sharedMem, stream[whichperm]>>>(pop->d_pop, pop->d_pitch/sizeof(real), (whichperm == 0 ? perm : perm2), permpitch/sizeof(unsigned int), config->f_cross, config->f_weight, pop->dim, pop->size, random->d_states, random->d_pitch/sizeof(curandState), pop->d_fval, newpop->d_pop, newpop->d_pitch/sizeof(real), newpop->d_fval, shifts->devshifts
+#ifdef SHIFTEDHYBRID
+		, shifts->pitch/sizeof(real)
+#endif
+#if STRATEGY == 3
+		, pop->d_best
+#endif
+		);
+		CHECK_CUDA_ERROR();
+		
+		whichperm = (whichperm == 0 ? 1: 0);
+		//~ printinddim(pop, 4999, 5);
+		
+		nfeval += config->i_popsize;
+		
+		DPRINTF(3, "Launching genperm<<<%u, %u>>>(%p, %lu, %p, %lu, %p, %lu)\n", kernelconfig.initblocks, kernelconfig.initthreads, (whichperm == 0 ? perm : perm2), permpitch/sizeof(unsigned int), globalperm, globalpermpitch/sizeof(unsigned int), random->d_states, random->d_pitch/sizeof(curandState));
+		genperm<<<kernelconfig.initblocks, kernelconfig.initthreads, 0, stream[whichperm]>>>((whichperm == 0 ? perm : perm2), permpitch/sizeof(unsigned int), globalperm, globalpermpitch/sizeof(unsigned int), random->d_states, random->d_pitch/sizeof(curandState));
+		CHECK_CUDA_ERROR();
+		
+		HANDLE_CUDA_ERROR(cudaMemcpy2D(pop->d_pop, pop->d_pitch, newpop->d_pop, newpop->d_pitch, pop->size * sizeof(real), pop->dim, cudaMemcpyDeviceToDevice));
+		HANDLE_CUDA_ERROR(cudaMemcpy(pop->d_fval, newpop->d_fval, pop->size*sizeof(real), cudaMemcpyDeviceToDevice));
+//~ #if STRATEGY == 3
+		//~ HANDLE_CUDA_ERROR(cudaMemcpy(newpop->d_best, pop->d_best, pop->dim*sizeof(real), cudaMemcpyDeviceToDevice));
+//~ #endif
+		
+		DEBUG(2, printuintmat(perm, permpitch, pop->size, PM_DEPTH));
+		DEBUG(2, printuintmat(perm2, permpitch, pop->size, PM_DEPTH));
+
+		loadfvalfromdev(pop);
+		getBest(pop);
+
+
+		DEBUG(2, printfval(pop));
+		DEBUG(2, printpop(pop));
+
+		DPRINTF(1, "Best value %12.30f at %d (%lu)\n", pop->h_fval[pop->best], pop->best, nfeval);
+#ifdef RECORD_OUT
+		if (FErecord[FErecord_idx] * config->i_popsize == nfeval)
+			FErecord_val[FErecord_idx++] = pop->h_fval[pop->best];
+		while (pop->h_fval[pop->best]-config->f_optimal <= FVrecord[FVrecord_idx] && FVrecord_idx != FVrecord_num) {
+			FVrecord_val[FVrecord_idx++] = nfeval;
+		}
+#endif
+
+		if (nfeval % (pop->size * 100) == 0) {
+			printf("Best Value %12.30f (%ld of %ld = %f%%)\n", pop->h_fval[pop->best], nfeval, config->l_maxnfeval, (double)nfeval*100/(double)config->l_maxnfeval);
+		}
+		
+		if (fabs(pop->h_fval[pop->best] - config->f_optimal) <= VTR && nfevalatvtr == 0) {
+			end = clock();
+			DPRINTF(1, "VTR Reached! Optimal: %12.30f Best: %12.30f Difference: %12.30f Vector: [", config->f_optimal,  pop->h_fval[pop->best], fabs(pop->h_fval[pop->best] - config->f_optimal));
+			nfevalatvtr = nfeval;
+			//~ printpop(pop);
+			//~ printind(pop, 3);
+			DEBUG(1,
+			loadfromdev(pop);
+			for (int i=0; i<pop->dim; i++) {
+				printf("%12.30f ", pop->h_pop[i * pop->size + pop->best]);
+			}
+			printf("]\n");
+			);
+			
+			DPRINTF(1, "Function evaluations: %lu - Elapsed time: %lu\n", nfeval, end - begin);	
+		}
+	}
+	end = clock();
+
+	
+	SAVERESULT
+	DPRINTF(1, "Optimal: %12.30f Best: %12.30f Difference: %12.30f Vector: [", config->f_optimal,  pop->h_fval[pop->best], fabs(pop->h_fval[pop->best] - config->f_optimal));
+	loadfromdev(pop);
+	//~ printpop(pop);
+	//~ printind(pop, 3);
+	DEBUG(1,
+	for (int i=0; i<pop->dim; i++) {
+		printf("%12.30f ", pop->h_pop[i * pop->size + pop->best]);
+	}
+	printf("]\n");
+	);
+	
+	//~ printfval(pop);
+	//~ printpop(pop);
+	
+	printf("Function evaluations: %lu - Elapsed time: %lu (%f sec) - VTR reached at: %ld\n", nfeval, end - begin, t2-t1, nfevalatvtr);
+	EXIT_RECORD
+	EXITSOLVE
+	DPRINTF(1, "Finished solving using DE\n");
+	return SUCCESS;
+}

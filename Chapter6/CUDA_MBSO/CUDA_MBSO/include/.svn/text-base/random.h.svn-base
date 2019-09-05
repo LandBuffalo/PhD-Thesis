@@ -1,0 +1,29 @@
+#ifndef __RANDOM_HH__
+#define __RANDOM_HH__
+
+#include <config.h>
+#include <curand_kernel.h>
+#include <error.h>
+
+typedef struct randomgen_t {
+	curandState *d_states;
+	size_t d_pitch;
+	dim3 threads;
+	dim3 blocks;
+} randomgen;
+
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+error initRandom(dim3 blocks, dim3 threads, randomgen **random, cudaStream_t stream, unsigned int seed);
+void freeRandom(randomgen *random);
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

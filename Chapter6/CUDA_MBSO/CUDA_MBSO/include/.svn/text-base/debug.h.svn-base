@@ -1,0 +1,22 @@
+#ifndef __DEBUG_HH__
+#define __DEBUG_HH__
+
+#include <de.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void printind(population* pop, unsigned int ind);
+void printinddim(population* pop, unsigned int ind, unsigned int dimmax);
+void printpop(population* pop);
+
+void printfval(population* pop);
+void printuintmat(unsigned int * mat, size_t pitch, unsigned int cols, unsigned int rows);
+void printrealmat(real * mat, size_t pitch, unsigned int cols, unsigned int rows);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

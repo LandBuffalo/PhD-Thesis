@@ -1,0 +1,19 @@
+i_stid 2
+l_maxnfeval 10000
+f_cross 0.3
+f_weight 0.5
+i_seed 104572
+i_run 1
+i_fnum 1
+output test
+
+# dimension of parameter vector: i_dim
+# population size: i_popsize
+# DE strategy id: i_stid
+# maximum number of function evaluations: l_maxnfeval
+# crossover constant: f_cross
+# scale factor: f_weight
+# random seed: i_seed
+# output refresh cycle: i_refresh
+# minimum parameter bound: f_minbound[i_dim]
+# maximum parmaeter bound: f_maxbound[i_dim]

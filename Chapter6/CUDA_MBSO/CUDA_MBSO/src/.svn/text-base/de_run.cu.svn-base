@@ -1,0 +1,248 @@
+#include <stdio.h>
+#include <config.h>
+#include <device.h>
+#include <params.h>
+#include <de.h>
+
+
+
+
+error initConfig(char* filename, de_config* result) {
+	parsedconfigs * parsed;
+	error err = parseConfig(filename, &parsed);
+	memset(result, 0, sizeof(de_config));
+	if (err != SUCCESS) return err;
+	result->input = filename;
+	
+	err = getInt(parsed, "i_dim", &result->i_dim);
+	if (err != SUCCESS) return err;
+	
+	err = getInt(parsed, "i_popsize", &result->i_popsize);
+	if (err != SUCCESS) return err;
+	
+	err = getInt(parsed, "i_stid", &result->i_stid);
+	if (err != SUCCESS) return err;
+	
+	err = getInt(parsed, "i_run", &result->i_run);
+	if (err != SUCCESS) return err;
+	
+	err = getLong(parsed, "l_maxnfeval", &result->l_maxnfeval);
+	if (err != SUCCESS) return err;
+	
+	err = getReal(parsed, "f_cross", &result->f_cross);
+	if (err != SUCCESS) return err;
+	
+	err = getReal(parsed, "f_weight", &result->f_weight);
+	if (err != SUCCESS) return err;
+	
+	err = getInt(parsed, "i_seed", &result->i_seed);
+	if (err != SUCCESS) return err;
+
+	//~ real value = 0.0;
+	//~ err = getReal(parsed, "f_minbound", &value);
+	//~ if (err != SUCCESS) return err;
+	//~ 
+	//~ result->f_minbound = (real*)malloc(sizeof(real)*result->i_dim);
+	result->f_minbound = MINBOUND;
+	//~ int i;
+	//~ for (i = 0; i < result->i_dim; i++) {
+		//~ result->f_minbound[i] = value;
+	//~ }
+	
+	//~ err = getReal(parsed, "f_maxbound", &value);
+	//~ if (err != SUCCESS) return err;
+	
+	//~ result->f_maxbound = (real*)malloc(sizeof(real)*result->i_dim);
+	
+	result->f_maxbound = MAXBOUND;
+	//~ for (i = 0; i < result->i_dim; i++) {
+		
+		//~ result->f_maxbound[i] = value;
+	//~ }
+	
+	
+	
+	
+	//~ err = getReal(parsed, "f_optimal", &result->f_optimal);
+	//~ if (err != SUCCESS) return err;
+	//~ 
+	//~ err = getReal(parsed, "f_bias", &result->f_bias);
+	//~ if (err != SUCCESS) return err;
+	
+	result->f_bias = F_BIAS;
+	result->f_optimal = F_OPTIMAL;
+	result->f_minbound = MINBOUND;
+	result->f_maxbound = MAXBOUND;
+	
+	err = getString(parsed, "output", &result->output);
+	if (err != SUCCESS) return err;
+	
+	//~ /*
+	 //~ * Alloc space for configuration on device
+	 //~ */ 
+	//~ HANDLE_CUDA_ERROR(cudaMalloc(&(result->d_config), sizeof(de_config)));
+	//~ DPRINTF(1,"Device config is at %p\n", result->d_config);
+	//~ /*
+	 //~ * Copy entire struct
+	 //~ */ 
+	//~ DPRINTF(1,"Copying %lu bytes from (host) %p to (device) %p\n", sizeof(de_config), &result, result->d_config);
+	//~ HANDLE_CUDA_ERROR(cudaMemcpy(result->d_config, result, sizeof(de_config), cudaMemcpyHostToDevice));
+
+	/*
+	 * At this point, pointers are still pointing to host memory.
+	 * Symbols on device struct should be replaced.
+	 */
+	 
+	//~ real* tmpspace;
+	//~ char* memaddr = (char*)result->d_config;
+
+	//~ /* Solve minbound */
+	//~ HANDLE_CUDA_ERROR(cudaMalloc(&(tmpspace), result->i_dim*sizeof(real)));
+	//~ HANDLE_CUDA_ERROR(cudaMemcpy(tmpspace, result->f_minbound, result->i_dim*sizeof(real), cudaMemcpyHostToDevice));
+	//~ DPRINTF(2,"Copying %lu bytes from (host) %p to (device) %p - value %p\n", sizeof(real*), &tmpspace, (real*)(memaddr + MINBOUND_OFFSET), tmpspace);
+	//~ HANDLE_CUDA_ERROR(cudaMemcpy((real*)(memaddr + MINBOUND_OFFSET), &tmpspace, sizeof(real*), cudaMemcpyHostToDevice)); 
+	//~ 
+	//~ /* Solve maxbound */
+	//~ HANDLE_CUDA_ERROR(cudaMalloc(&(tmpspace), result->i_dim*sizeof(real)));
+	//~ HANDLE_CUDA_ERROR(cudaMemcpy(tmpspace, result->f_maxbound, result->i_dim*sizeof(real), cudaMemcpyHostToDevice));
+	//~ DPRINTF(2,"Copying %lu bytes from (host) %p to (device) %p - value %p\n", sizeof(real*), &tmpspace, (real*)(memaddr + MAXBOUND_OFFSET), tmpspace);
+	//~ HANDLE_CUDA_ERROR(cudaMemcpy((real*)(memaddr + MAXBOUND_OFFSET), &tmpspace, sizeof(real*), cudaMemcpyHostToDevice)); 
+	//~ 
+	//~ 
+	//~ tmpspace = NULL;
+	//~ DPRINTF(2,"Copying %lu bytes from (host) %p to (device) %p - value %p\n", sizeof(real*), &tmpspace, (real*)(memaddr + OUTPUT_OFFSET), tmpspace);
+	//~ HANDLE_CUDA_ERROR(cudaMemcpy((char*)(memaddr + OUTPUT_OFFSET),&tmpspace, sizeof(char*), cudaMemcpyHostToDevice)); 
+	
+	freeConfig(parsed);
+	return SUCCESS;
+}
+
+
+
+void dumpConfig(de_config *config) {
+	printf("=========================\n");
+	printf(" Config File %s \n", config->input);
+	printf("=========================\n\n");
+	printf("%s %d\n", "i_dim", config->i_dim);
+	printf("%s %d\n", "i_popsize", config->i_popsize);
+	printf("%s %d\n", "i_stid", config->i_stid);
+	printf("%s %lu\n", "l_maxnfeval", config->l_maxnfeval);
+	printf("%s %f\n", "f_cross", config->f_cross);
+	printf("%s %f\n", "f_weight", config->f_weight);
+	printf("%s %d\n", "i_seed", config->i_seed);
+	printf("%s %f\n", "f_minbound", config->f_minbound);
+	//~ printf("%s %f\n", "f_minbound", config->f_minbound[0]);
+	printf("%s %f\n", "f_maxbound", config->f_maxbound);
+	//~ printf("%s %f\n", "f_maxbound", config->f_maxbound[0]);
+	printf("%s %f\n", "f_optimal", config->f_optimal);
+	printf("%s %f\n", "sp_bias", config->f_bias);
+	printf("%s %s\n", "output", config->output);
+	printf("%s %d\n", "i_run", config->i_run);
+	printf("=========================\n");
+}
+
+__global__ void dumpDeviceConfig(de_config *config) {
+	printf("=========================\n");
+	printf(" Device Config File      \n");
+	printf("=========================\n\n");
+	printf("%s %d\n", "i_dim", config->i_dim);
+	printf("%s %d\n", "i_popsize", config->i_popsize);
+	printf("%s %d\n", "i_stid", config->i_stid);
+	printf("%s %lu\n", "l_maxnfeval", config->l_maxnfeval);
+	printf("%s %f\n", "f_cross", config->f_cross);
+	printf("%s %f\n", "f_weight", config->f_weight);
+	printf("%s %d\n", "i_seed", config->i_seed);
+	//~ printf("%s @%p\n", "f_minbound", config->f_minbound);
+	//~ printf("%s %f\n", "f_minbound", config->f_minbound[0]);
+	printf("%s %f\n", "f_minbound", config->f_minbound);
+	//~ printf("%s @%p\n", "f_maxbound", config->f_maxbound);
+	//~ printf("%s %f\n", "f_maxbound", config->f_maxbound[0]);
+	printf("%s %f\n", "f_maxbound", config->f_maxbound);
+	printf("%s %f\n", "f_optimal", config->f_optimal);
+	printf("%s %f\n", "sp_bias", config->f_bias);
+	printf("%s @%p\n", "output", (void*)config->output);
+	printf("%s %d\n", "i_run", config->i_run);
+	printf("=========================\n");
+}
+
+
+void freeDeConfig(de_config *config) {
+	DPRINTF(2, "Freeing config structs generator.\n");
+	if (config == NULL) return;
+	//~ if (config->f_maxbound != NULL) free(config->f_maxbound);
+	//~ if (config->f_minbound != NULL) free(config->f_minbound);
+	if (config->output != NULL) free(config->output);
+	
+	if (config->d_config != NULL) {
+		//~ real* tmpspace;
+		//~ char* memaddr = (char*)config->d_config;
+		//~ HANDLE_CUDA_ERROR(cudaMemcpy(&tmpspace, (real*)(memaddr + MINBOUND_OFFSET), sizeof(real*), cudaMemcpyDeviceToHost));
+		//~ if (tmpspace != NULL) HANDLE_CUDA_ERROR(cudaFree(tmpspace));
+		//~ HANDLE_CUDA_ERROR(cudaMemcpy( &tmpspace,(real*)(memaddr + MAXBOUND_OFFSET), sizeof(real*), cudaMemcpyDeviceToHost));
+		//~ if (tmpspace != NULL) HANDLE_CUDA_ERROR(cudaFree(tmpspace));
+		HANDLE_CUDA_ERROR(cudaFree(config->d_config));
+	}
+	
+}
+
+
+void help() {
+	printf("HELP!\n");
+	
+}
+
+de_config currentconfig;
+
+int main (int argc, char* argv[]) {
+#ifdef DEBUGLEVEL
+	printf("Starting Cuda DE with floating point numbers size = %lu bytes and DEBUG level %d\n", sizeof(real), DEBUGLEVEL);
+	
+#else	
+	printf("Starting Cuda DE with floating point numbers size = %lu bytes\n", sizeof(real));
+#endif
+#ifdef BLACKBOX
+	printf("Using BLACKBOX behaviour\n");
+#else
+	printf("NOT Using BLACKBOX behaviour\n");
+#endif
+	if (isParam("-d", argv, argc)) {
+		int device = atoi(getParam("-d", argv, argc));
+		selectDevice(device);
+	} else {
+		selectDevice(0);
+	}
+	
+	error err = SUCCESS;
+	
+	if (isParam("-f", argv, argc)) {
+		char * filename = getParam("-f", argv, argc);
+		initConfig(filename, &currentconfig);
+		//~ dumpDeviceConfig<<<1,1>>>(currentconfig.d_config);
+		//~ CHECK_CUDA_ERROR();
+		
+		if (isParam("-r", argv, argc)) {
+			int run = atoi(getParam("-r", argv, argc));
+			printf("Overriding run number to %d\n", run);
+			currentconfig.i_run = run;
+		}
+		
+		if (isParam("-s", argv, argc)) {
+			int seed = atoi(getParam("-s", argv, argc));
+			printf("Overriding seed number to %d\n", seed);
+			currentconfig.i_seed = seed;
+		}
+		
+		dumpConfig(&currentconfig);
+		
+		err = solve(&currentconfig);
+		
+	
+	} else {
+		help();
+		return err;
+	}
+		
+	freeDeConfig(&currentconfig);
+	
+	return err;
+}
