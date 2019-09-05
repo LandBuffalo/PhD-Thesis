@@ -22,11 +22,11 @@ Before running the code, users need to decide the parameters of SPEO. Please see
 -dim: the problem dimension, currently it support 10, 30, 50, 100
 -total_functions: i-j, where i and j are index of test functions of CEC2014 benchmarks. 1<=i<=j<=30
 -total_runs: i-j, where i and j are index of repeated run instance. 1<=i<=j
--max_base_FEs: the maximal base fitness evaluations (FEs). So total FEs are max_base_FEs*dim based on CEC2014 benchmark
+-max_base_FEs: the maximal base fitness evaluations (FEs). So total FEs are max_base_FEs*dim based on CEC2014
 -interval: the migration interval (I) defined by SPEO 
 -connection_rate: the connection rate (Rc) defined by SPEO 
 -buffer_capacity: the buffer capacity rate (Cb) defined by SPEO  
--global_pop_size: the global population size. The island size is global_pop_size/island_num, where island_num=#cores
+-global_pop_size: the global population size. The island size is global_pop_size/#cores
 ```
 The shift, rotation and shuffle data is located at ./bin/input/ fold. It is provide by CEC2014 official website
 
