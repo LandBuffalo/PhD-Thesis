@@ -23,7 +23,7 @@ Before running the code, users need to decide the parameters of SPEO. Please see
 -dim: the problem dimension, currently it support 10, 30, 50, 100
 -total_functions: i-j, where i and j are index of test functions of CEC2014 benchmarks. 1<=i<=j<=30
 -total_runs: i-j, where i and j are index of repeated run instance. 1<=i<=j
--max_base_FEs: the maximal base fitness evaluations (FEs) which stop the SPEO. So the really total FEs are max_base_FEs*dim of CEC2014
+-max_base_FEs: the maximal base fitness evaluations (FEs). So the total FEs are max_base_FEs*dim of CEC2014
 -interval: the migration interval (I) defined by SPEO 
 -connection_rate: the connection rate (Rc) defined by SPEO 
 -buffer_capacity: the buffer capacity rate (Cb) defined by SPEO  
