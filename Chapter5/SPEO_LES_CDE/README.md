@@ -1,4 +1,4 @@
-# SPEO-HPC-GPU
+# SPEO-LES-CDE
 
 This code is the implementation of LES-CDE based on SPEO-CPU on CPU-only HPC (Chapter 5 of Chen Jin's thesis).
 
