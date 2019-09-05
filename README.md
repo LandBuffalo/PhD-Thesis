@@ -1,10 +1,10 @@
-# CUDA-MBSO
+# Code of Chen's PhD thesis
 
 This project is the code for PhD thesis of Chen Jin @ RMIT University. The thesis title is Scalable Parallel Evolutionary Optimisation based on HPC. This project contains the code for four main chapters (4,5,6 and 7) in each fold. The instruction and guidelines to use the codes of each chapter can be seen at each fold.
 
 ## Getting Started
 
-Most codes are executed on HPC system exclude chapter 6. So set the enverinment of HPC is necessary
+Most codes are executed on HPC system exclude chapter 6. So properly setting the enverinment of HPC is necessary
 ### Prerequisites
 
 These are all softwares that are used in this project
