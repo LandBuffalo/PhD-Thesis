@@ -19,8 +19,8 @@ The above versions are tested. Other versions of above software may also work on
 ## Running the code
 If want to rebuild the code, please use x64 release mode and add the curand.lib into vs project properties. Then use F7 to build the program
 
-Before running the code, enter the directories "./x64/Release/" fold. Then run "CUDA_MBSO.exe -f input.txt -d [x] -func [y] -id [z] -ip [m] -r [n] -c [o]". The explanation of each argv are as follows:
-
+Before running the code, enter the directories ```./x64/Release/``` fold. Then run ```CUDA_MBSO.exe -f input.txt -d [x] -func [y] -id [z] -ip [m] -r [n] -c [o]```. The explanation of each argv are as follows:
+```
 input.txt contains the non-important parameters setting including random seed, maximal FEs and so on.
 [x] is the index of GPU device, if you only have one GPU, x=0, otherwise, set the index based on your PC.
 [y] is the function index from 1 to 30 based on the CEC2014 benchmark
@@ -28,11 +28,11 @@ input.txt contains the non-important parameters setting including random seed, m
 [m] is the population size of MBSO
 [n] is the instance index which is larger than 0
 [o] is the number of centers which is a crucial parameters of MBSO
-
+```
 The shift, rotation and shuffle data is located at .input/ fold. It is provide by CEC2014 official website
 
 ## Output
-The output of slum system is at the current fold named "dim=[z]_pop=[m].out". The first column is the function ID, the second column is the instance ID, the third column is the optimisation accuracy and the last column is the computing time.
+The output of slum system is at the current fold named ```dim=[z]_pop=[m].out```. The first column is the function ID, the second column is the instance ID, the third column is the optimisation accuracy and the last column is the computing time.
 
 ## Authors
 

@@ -28,15 +28,15 @@ Before running the code, users need to decide the parameters of SPEO. Please see
 -buffer_capacity: the buffer capacity rate (Cb) defined by SPEO  
 -global_pop_size: the global population size. The island size is global_pop_size/#cores
 ```
-The shift, rotation and shuffle data is located at ./bin/input/ fold. It is provide by CEC2014 official website
+The shift, rotation and shuffle data is located at ```./bin/input/``` fold. It is provide by CEC2014 official website
 
 If run on HPC with job submission system (Ozstar using slum system)firstly enter the ```./bin fold```. Then set the number of processors at the second line of SPEO.sh file: ```#SBATCH --ntasks=x```, where x is the number of processors. Then run ```sbatch SPEO.sh```. The parameters can be changed in the file of SPEO.sh
 
 
 ## Output
-The output of slum system is at the ./bin like slum-xxxxxxx.out, wgere xxxxxxx is the job id.
+The output of slum system is at the ```./bin``` like ```slum-xxxxxxx.out```, wgere xxxxxxx is the job id.
 
-The output of algorithm is at ./bin/Results/. The file is .csv which list the computing time, optimization accuracy and parameters you used. Each line is a independent run instance.
+The output of algorithm is at ```./bin/Results/```. The file is .csv which list the computing time, optimization accuracy and parameters you used. Each line is a independent run instance.
 
 ## Authors
 
